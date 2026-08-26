@@ -118,7 +118,6 @@ def create_app(db_path: str = "/data/compounder.db") -> FastAPI:
                 ticker=data.ticker.upper(),
                 name=data.name,
                 sector=data.sector,
-                industry=data.industry,
             )
             
             return {'success': True, 'company_id': company_id, 'ticker': data.ticker.upper()}
