@@ -16,6 +16,7 @@ services:
       - "traefik.enable=true"
       - "traefik.http.routers.compounder.rule=Host(`stocks.buffet-ai.tech`) && PathPrefix(`/api`)"
       - "traefik.http.middlewares.compounder-strip.stripprefix.prefixes=/api"
+      - "traefik.http.routers.compounder.middlewares=compounder-strip"
       - "traefik.http.routers.compounder.entrypoints=websecure"
       - "traefik.http.routers.compounder.tls=true"
       - "traefik.http.routers.compounder.tls.certresolver=letsencrypt"
