@@ -9,6 +9,7 @@ Endpoints:
 - POST /companies/{id}/calculate - Trigger full recalculation
 - GET /companies/{id}/scores - Historical compounder scores
 - GET /companies/{id}/alerts - Alert history
+- GET /api/alerts - All alerts (global)
 - POST /pipeline/import-json - Ingest SEC extraction JSON
 - GET /metrics/{company_id}?period_id=N - Financial metrics for period
 - GET /config/weights - Current scoring weights
@@ -129,21 +130,59 @@ def create_app(db_path: str = "/data/compounder.db") -> FastAPI:
     @app.get("/api/companies/{company_id}")
     @app.get("/companies/{company_id}")  # Alias: works with and without /api prefix
     async def get_company(company_id: int):
+        """Get company detail view — includes latest_score with engine breakdown AND historical_scores chart data."""
         try:
             company = db.get_company_by_id(company_id)
             if not company:
                 raise HTTPException(status_code=404, detail="Company not found")
             
+            # Latest score with ALL flat columns needed by frontend
             latest_cs = db.get_latest_compounder_score(company_id)
+            
+            # Build engines dict from flat DB columns for frontend chart/breakdown
+            engines_dict = None
+            if latest_cs:
+                engines_dict = {
+                    'revenue_growth': {
+                        'score': latest_cs.get('revenue_growth_score'),
+                        'weight': 0.25,
+                        'label': 'Revenue Growth',
+                    },
+                    'roic': {
+                        'score': latest_cs.get('roic_score'),
+                        'weight': 0.30,
+                        'label': 'ROIC / Incremental ROIC',
+                    },
+                    'margin_expansion': {
+                        'score': latest_cs.get('margin_expansion_score'),
+                        'weight': 0.20,
+                        'label': 'Margin Expansion',
+                    },
+                    'reinvestment_runway': {
+                        'score': latest_cs.get('reinvestment_runway_score'),
+                        'weight': 0.25,
+                        'label': 'Reinvestment Runway',
+                    },
+                }
+            
+            # Attach engines_dict and data_complete to latest_score for frontend
+            if latest_cs:
+                latest_cs['engines'] = engines_dict
+                latest_cs['company_id'] = company_id
+            
+            # Historical scores FOR CHART ONLY (ALL periods, not just latest)
             all_scores = db.get_compounder_scores(company_id)
+            
+            # Alerts for this company
             alerts = db.get_alerts(company_id)
             
+            # Periods info
             periods = db.get_periods_for_company(company_id)
             
             result = {
                 'company': company,
                 'latest_score': latest_cs,
-                'historical_scores': all_scores[-10:],  # Last 10 periods
+                'historical_scores': all_scores[-10:],  # Last 10 periods for chart
                 'alerts': alerts[-20:],  # Last 20 alerts
                 'periods_count': len(periods),
                 'last_calculated_at': latest_cs.get('calculated_at') if latest_cs else None,
@@ -247,6 +286,16 @@ def create_app(db_path: str = "/data/compounder.db") -> FastAPI:
         """Get alert history for a company."""
         try:
             alerts = db.get_alerts(company_id, limit=limit)
+            return {'alerts': alerts, 'count': len(alerts)}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+    
+    # --- GLOBAL ALERTS ENDPOINT ---
+    @app.get("/api/alerts")
+    async def get_all_alerts(limit: int = 100):
+        """Get ALL alerts globally (deduplicated)."""
+        try:
+            alerts = db.get_alerts(limit=limit)
             return {'alerts': alerts, 'count': len(alerts)}
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
@@ -379,11 +428,10 @@ def create_app(db_path: str = "/data/compounder.db") -> FastAPI:
                     'reinvestment_runway': config.weights['reinvestment_runway'],
                 },
                 'normalization': config.normalization_params,
-                'classifications': {
-                    'COMPETITIVE_COMPOUNDER': '>= 80',
-                    'STRONG_BUSINESS': '>= 60',
-                    'GOOD_BUSINESS': '>= 40',
-                    'WEAK_BUSINESS': '< 40',
+                'classifications': config.classification_ranges,
+                'classification_rules': {
+                    'COMPOUNDER_CLASSIFICATION': config.compounder_classification_thresholds,
+                    'DATA_INCOMPLETE_NOTE': 'If any of the four inputs are unavailable: Score Status = DATA_INCOMPLETE, no classification assigned',
                 },
             }
         except Exception as e:
@@ -442,19 +490,16 @@ def create_app(db_path: str = "/data/compounder.db") -> FastAPI:
         """
         Dashboard overview endpoint — returns summarized data for the main view.
         
-        Returns: top compounds, latest class changes, active alerts, system status.
+        KEY RULES:
+        - top_compounders uses LATEST score per company (NOT all historical rows)
+        - companies_with_scores = DISTINCT count, not total row count
+        - DATA_INCOMPLETE companies excluded from top compounds list
         """
         try:
-            # Top compounders
-            top_companies_query = db.query("""
-                SELECT cs.*, c.ticker, c.name, c.sector
-                FROM compounder_scores cs
-                JOIN companies c ON c.id = cs.company_id
-                ORDER BY cs.compounder_score DESC
-                LIMIT 20
-            """)
+            # Top compounders: ONE score per company, most recent only
+            top_companies = db.get_latest_scores_per_company(limit=20)
             
-            # Recent alerts
+            # Recent alerts (deduped)
             recent_alerts = db.get_alerts(limit=10)
             
             # Class changes
@@ -465,21 +510,35 @@ def create_app(db_path: str = "/data/compounder.db") -> FastAPI:
                 LIMIT 10
             """)
             
-            # System status
-            companies_count = db.query("SELECT COUNT(*) as cnt FROM companies")
-            scores_count = db.query("SELECT COUNT(*) as cnt FROM compounder_scores")
+            # System status: distinct companies with VALID scores
+            companies_count = db.list_companies()
+            companies_with_scores = db.get_company_count_with_valid_scores()
             
             return {
-                'top_compounders': top_companies_query[:10],
+                'top_compounders': top_companies[:10],
                 'recent_alerts': recent_alerts,
                 'recent_class_changes': list(class_changes),
                 'system_status': {
-                    'companies_count': companies_count[0]['cnt'] if companies_count else 0,
-                    'scores_stored': scores_count[0]['cnt'] if scores_count else 0,
+                    'companies_count': len(companies_count),
+                    'companies_with_valid_scores': companies_with_scores,
                     'dashboard_version': '1.0.0',
                     'calculated_at': datetime.utcnow().isoformat(),
                 },
             }
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+    
+    @app.get("/api/all-scores")
+    @app.get("/all-scores")  # Alias
+    async def all_scores_endpoint():
+        """Return every raw compounder_score row for history drill-down.
+        
+        This is separate from dashboard_latest so clients can see full history
+        without the UI mixing up multiple periods as different companies.
+        """
+        try:
+            scores = db.list_all_compounder_scores()
+            return {'scores': scores, 'count': len(scores)}
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
     

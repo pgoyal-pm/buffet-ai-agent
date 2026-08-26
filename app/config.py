@@ -11,11 +11,20 @@ Total: 100%
 
 Weights are stored as both a Python dict AND persisted in the database
 so they can be updated without code deployment.
+
+Classification system (spec v1.0):
+- 90-100: Exceptional Compounder
+- 80-89:  Strong Compounder
+- 70-79:  Potential Compounder
+- 60-69:  Average
+- 50-59:  Weak
+- <50:    Non-Compounder
+- DATA_INCOMPLETE: One or more of four inputs missing (do NOT classify)
 """
 
 import json
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 
 # Default scoring weights — these are the ONLY place defaults live
@@ -26,17 +35,22 @@ DEFAULT_WEIGHTS: Dict[str, float] = {
     "reinvestment_runway": 0.25,
 }
 
-# Classification thresholds (as defined in spec)
+# Classification thresholds (as defined in spec v1.0)
+# These map exclusively to the Compounder Score (0-100)
+# They do NOT include STRONG_BUSINESS / WEAK_BUSINESS — those belong
+# to a separate business-quality assessment if one exists.
 CLASSIFICATION_THRESHOLDS = [
-    (90, "COMPETITIVE_COMPOUNDER"),
-    (80, "COMPETITIVE_COMPOUNDER"),
-    (70, "STRONG_BUSINESS"),
-    (60, "STRONG_BUSINESS"),
-    (50, "GOOD_BUSINESS"),
-    (40, "GOOD_BUSINESS"),
-    (30, "WEAK_BUSINESS"),
-    (0, "WEAK_BUSINESS"),
+    (90, "Exceptional Compounder"),
+    (80, "Strong Compounder"),
+    (70, "Potential Compounder"),
+    (60, "Average"),
+    (50, "Weak"),
+    (0,  "Non-Compounder"),
 ]
+
+# Special sentinel values for data completeness
+DATA_INCOMPLETE = "DATA_INCOMPLETE"     # One+ of four inputs missing
+INSUFFICIENT_DATA = "INSUFFICIENT_DATA"  # Weighted avg couldn't be computed (all zero/fail)
 
 # Revenue growth sub-scores weighting
 REVENUE_GROWTH_PARAMS = {
@@ -169,6 +183,7 @@ CANONICAL_METRIC_MAP = {
     "market_capitalization": "market_cap",
 }
 
+
 def normalize_metric_name(raw_name: str) -> str:
     """Convert raw extracted metric name to canonical form."""
     key = raw_name.strip().lower()
@@ -190,6 +205,12 @@ class Config:
         return sum(self.weights.values())
     
     def classification(self, score: float) -> str:
+        """Map a numeric Compounder Score to its classification label.
+        
+        Rule: only CLASSIFICATION_THRESHOLDS apply here.
+        STRONG_BUSINESS / WEAK_BUSINESS must NOT appear — they belong
+        to a separate quality assessment if it exists.
+        """
         for threshold, label in CLASSIFICATION_THRESHOLDS:
             if score >= threshold:
                 return label
@@ -204,6 +225,27 @@ class Config:
             "margin_benchmarks": MARGIN_BENCHMARKS,
             "classifications": {str(t): l for t, l in CLASSIFICATION_THRESHOLDS},
         }
+    
+    @property
+    def classification_ranges(self) -> Dict[str, str]:
+        """Classification ranges as label → range string (readable)."""
+        ranges = {}
+        for i in range(len(CLASSIFICATION_THRESHOLDS)):
+            low = CLASSIFICATION_THRESHOLDS[i][0]
+            high = CLASSIFICATION_THRESHOLDS[i+1][0] - 1 if i + 1 < len(CLASSIFICATION_THRESHOLDS) else "100"
+            label = CLASSIFICATION_THRESHOLDS[i][1]
+            if high == "100":
+                ranges[label] = f">= {low}"
+            else:
+                ranges[label] = f"{low}-{high}"
+        # Add DATA_INCOMPLETE
+        ranges[DATA_INCOMPLETE] = "One+ input missing"
+        return ranges
+    
+    @property
+    def compounder_classification_thresholds(self) -> List[tuple]:
+        """Return the raw classification threshold list for API consumers."""
+        return CLASSIFICATION_THRESHOLDS
 
 
 def get_config():
@@ -218,5 +260,6 @@ if __name__ == "__main__":
     print(f"Database: {cfg.database_path}")
     print(f"Weights: {cfg.weights}")
     print(f"Sum: {cfg.weights_sum}")
+    print("\nClassification lookup:")
     for s in [95, 85, 75, 65, 55, 40]:
-        print(f"Score {s}: {cfg.classification(s)}")
+        print(f"  Score {s}: {cfg.classification(s)}")

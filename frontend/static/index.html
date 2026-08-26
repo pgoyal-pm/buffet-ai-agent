@@ -302,7 +302,9 @@
         function updateDashboardStats(data) {
             const status = data.system_status || {};
             document.getElementById('statsCompanies').textContent = status.companies_count || '--';
-            document.getElementById('statsScores').textContent = status.scores_stored || '--';
+            // Rule: show companies WITH VALID scores, not total raw score rows
+            document.getElementById('statsScores').textContent = 
+                status.companies_with_valid_scores ?? status.companies_count ?? '--';
             document.getElementById('statsAlerts').textContent = (data.recent_alerts || []).length;
             
             const healthSpan = document.getElementById('systemStatus');
@@ -316,30 +318,52 @@
             const tbody = document.getElementById('topCompoundersBody');
             tbody.innerHTML = '';
 
+            if (!compounders || compounders.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="6" class="py-6 text-center text-gray-400">No companies with valid scores</td></tr>';
+                return;
+            }
+
             compounders.forEach(c => {
-                const score = c.total_score || 0;
+                // compounder_score from DB via get_latest_scores_per_company()
+                const score = c.compounder_score !== null && c.compounder_score !== undefined ? parseFloat(c.compounder_score) : 0;
                 const classification = c.classification || 'N/A';
-                const scoreColor = getScoreColor(score);
+                const data_complete = c.data_complete;
+                const data_incomplete_reasons = c.data_incomplete_reasons;
+                
+                let displayScore = score;
+                let displayClassification = classification;
+                let showIncompleteBadge = false;
+                
+                if (classification === 'DATA_INCOMPLETE' || classification === 'INSUFFICIENT_DATA') {
+                    displayScore = '--';
+                    displayClassification = classification;
+                    showIncompleteBadge = true;
+                } else {
+                    displayScore = score.toFixed(1);
+                }
+                
+                const scoreColor = getScoreColor(score, data_complete);
                 const row = document.createElement('tr');
                 row.className = 'border-b border-gray-700 hover:bg-gray-750 cursor-pointer';
-                row.onclick = () => viewCompanyDetail(c.id);
+                row.onclick = () => viewCompanyDetail(c.company_id);
                 
                 row.innerHTML = `
                     <td class="py-3 px-2 font-medium">${c.ticker}</td>
-                    <td class="py-3 px-2">${c.name}</td>
-                    <td class="py-3 px-2">${c.sector}</td>
+                    <td class="py-3 px-2">${c.name || c.ticker}</td>
+                    <td class="py-3 px-2">${c.sector || '—'}</td>
                     <td class="py-3 px-2 text-right">
-                        <span class="font-bold" style="color: ${scoreColor}">${score.toFixed(1)}</span>
+                        ${showIncompleteBadge 
+                            ? '<span class="px-2 py-1 rounded text-xs font-medium bg-yellow-600 text-white">PENDING_DATA</span>'
+                            : `<span class="font-bold" style="color: ${scoreColor}">${displayScore}</span>`
+                        }
                     </td>
                     <td class="py-3 px-2 text-right">
                         <span class="px-2 py-1 rounded text-xs font-medium" style="background: ${scoreColor}20; color: ${scoreColor}">
-                            ${classification}
+                            ${displayClassification}
                         </span>
                     </td>
                     <td class="py-3 px-2 text-right">
-                        <button onclick="event.stopPropagation(); recalculateCompany(${c.id})" class="text-blue-400 hover:text-blue-300 text-xs">
-                            Recalc
-                        </button>
+                        ${!showIncompleteBadge ? `<button onclick="event.stopPropagation(); recalculateCompany(${c.company_id})" class="text-blue-400 hover:text-blue-300 text-xs">Recalc</button>` : ''}
                     </td>
                 `;
                 tbody.appendChild(row);
@@ -486,21 +510,72 @@
         function renderCompanyDetail(data) {
             const container = document.getElementById('companyDetailContent');
             
+            // Extract latest score fields properly (compounder_score, not total_score)
+            const ls = data.latest_score || {};
+            const score = ls.compounder_score ?? ls.total_score;
+            const classification = ls.classification || 'N/A';
+            const dataComplete = ls.data_complete;
+            const engines = ls.engines || {};
+            const revenueScore = engines.revenue_growth?.score ?? 0;
+            const roicScore = engines.roic?.score ?? 0;
+            const marginScore = engines.margin_expansion?.score ?? 0;
+            const runwayScore = engines.reinvestment_runway?.score ?? 0;
+            
+            let displayScore = score !== null && score !== undefined ? parseFloat(score).toFixed(1) : '--';
+            let displayClassification = classification;
+            let showIncompleteBadge = false;
+            let scoreColor = '#6b7280';
+            
+            if (classification === 'DATA_INCOMPLETE' || classification === 'INSUFFICIENT_DATA') {
+                displayScore = '--';
+                displayClassification = classification;
+                showIncompleteBadge = true;
+                scoreColor = '#f59e0b';
+            } else {
+                scoreColor = getScoreColor(score ?? 0, dataComplete);
+            }
+            
             container.innerHTML = `
                 <div class="bg-gray-800 rounded-lg p-6 mb-6">
                     <div class="flex justify-between items-start">
                         <div>
                             <h2 class="text-2xl font-bold">${data.company.ticker}</h2>
-                            <p class="text-gray-400">${data.company.name} • ${data.company.sector}</p>
+                            <p class="text-gray-400">${data.company.name} • ${data.company.sector || '—'}</p>
                         </div>
                         <div class="text-right">
                             <div class="text-sm text-gray-400">Latest Score</div>
-                            <div class="text-4xl font-bold" style="color: ${getScoreColor(data.latest_score?.total_score)}">
-                                ${data.latest_score?.total_score?.toFixed(1) || 'N/A'}
+                            <div class="text-4xl font-bold" style="color: ${scoreColor}">
+                                ${displayScore}
                             </div>
-                            <div class="text-xs mt-1">${data.latest_score?.classification || 'N/A'}</div>
+                            <div class="text-xs mt-1" style="color: ${scoreColor}">
+                                ${showIncompleteBadge 
+                                    ? '<span class="px-2 py-0.5 rounded bg-yellow-600 text-white text-[10px]">PENDING_DATA</span>'
+                                    : classification
+                                }
+                            </div>
                         </div>
                     </div>
+                    
+                    <!-- Engine Breakdown Summary -->
+                    ${!showIncompleteBadge ? `
+                    <div class="grid grid-cols-4 gap-4 mt-6 pt-6 border-t border-gray-700">
+                        <div>
+                            <div class="text-xs text-gray-400">Revenue Growth</div>
+                            <div class="text-lg font-semibold" style="color: ${getScoreColor(revenueScore)}">${revenueScore.toFixed(1)}</div>
+                        </div>
+                        <div>
+                            <div class="text-xs text-gray-400">ROIC / MECI</div>
+                            <div class="text-lg font-semibold" style="color: ${getScoreColor(roicScore)}">${roicScore.toFixed(1)}</div>
+                        </div>
+                        <div>
+                            <div class="text-xs text-gray-400">Margin Expansion</div>
+                            <div class="text-lg font-semibold" style="color: ${getScoreColor(marginScore)}">${marginScore.toFixed(1)}</div>
+                        </div>
+                        <div>
+                            <div class="text-xs text-gray-400">Reinvest Runway</div>
+                            <div class="text-lg font-semibold" style="color: ${getScoreColor(runwayScore)}">${runwayScore.toFixed(1)}</div>
+                        </div>
+                    </div>` : ''}
                 </div>
                 
                 <!-- Historical Scores Chart -->
@@ -512,7 +587,7 @@
                 </div>
             `;
 
-            // Create chart
+            // Create chart with real data (compounder_score from DB)
             createScoreChart(data.historical_scores || []);
         }
 
@@ -533,7 +608,11 @@
                     labels: scores.map(s => s.period_label || s.fiscal_year),
                     datasets: [{
                         label: 'Compounder Score',
-                        data: scores.map(s => s.total_score),
+                        data: scores.map(s => {
+                            // Use compounder_score (DB column), fallback to total_score for legacy rows
+                            const v = s.compounder_score ?? s.total_score;
+                            return v !== null && v !== undefined ? parseFloat(v) : NaN;
+                        }),
                         borderColor: '#3b82f6',
                         backgroundColor: 'rgba(59, 130, 246, 0.1)',
                         borderWidth: 2,
@@ -587,28 +666,69 @@
         function renderScoringBreakdown(data) {
             const container = document.getElementById('scoringEnginesBreakdown');
             
-            const engines = [
-                { name: 'Revenue Growth', weight: 0.25, color: '#3b82f6' },
-                { name: 'ROIC / Incremental ROIC', weight: 0.30, color: '#10b981' },
-                { name: 'Margin Expansion', weight: 0.20, color: '#f59e0b' },
-                { name: 'Reinvestment Runway', weight: 0.25, color: '#8b5cf6' },
+            // Try to get engines from latest_score first, then fall back to historical scores
+            const ls = data.latest_score || {};
+            const engines_data = ls.engines || {};
+            
+            // If no engines in latest_score, try last historical score
+            const histScores = data.historical_scores || [];
+            let engineFallback = null;
+            if (!engines_data && histScores.length > 0) {
+                // Find a score row that has engine breakdown data
+                for (let i = histScores.length - 1; i >= 0; i--) {
+                    if (histScores[i].engine_breakdown_json) {
+                        try {
+                            engineFallback = JSON.parse(histScores[i].engine_breakdown_json);
+                            break;
+                        } catch(e) {}
+                    }
+                }
+            }
+            
+            const engine_defs = [
+                { name: 'Revenue Growth', weight: 0.25, color: '#3b82f6', key: 'revenue_growth' },
+                { name: 'ROIC / Incremental ROIC', weight: 0.30, color: '#10b981', key: 'roic' },
+                { name: 'Margin Expansion', weight: 0.20, color: '#f59e0b', key: 'margin_expansion' },
+                { name: 'Reinvestment Runway', weight: 0.25, color: '#8b5cf6', key: 'reinvestment_runway' },
             ];
 
             let html = '<div class="space-y-4">';
             
-            engines.forEach(engine => {
+            engine_defs.forEach(engine => {
+                let scoreValue = 0;
+                let displayLabel = '—';
+                
+                // Try direct engine from latest score
+                if (engines_data[engine.key]?.score !== undefined) {
+                    scoreValue = engines_data[engine.key].score;
+                } else if (engineFallback?.engines?.[engine.key]?.score !== undefined) {
+                    scoreValue = engineFallback.engines[engine.key].score;
+                } else if (ls[`${engine.key}_score`] !== undefined) {
+                    scoreValue = ls[`${engine.key}_score`];
+                }
+                
+                if (ls.classification === 'DATA_INCOMPLETE' || ls.classification === 'INSUFFICIENT_DATA') {
+                    displayLabel = '<span class="text-yellow-500 text-xs">PENDING_DATA</span>';
+                } else {
+                    displayLabel = `${parseFloat(scoreValue).toFixed(1)}`;
+                }
+                
+                const barWidth = ls.classification === 'DATA_INCOMPLETE' || ls.classification === 'INSUFFICIENT_DATA' 
+                    ? 0 
+                    : Math.max(0, Math.min(100, scoreValue));
+                
                 html += `
                     <div class="bg-gray-800 rounded-lg p-4">
                         <div class="flex justify-between items-center mb-2">
                             <span class="font-medium">${engine.name}</span>
                             <span class="text-sm text-gray-400">Weight: ${(engine.weight * 100).toFixed(0)}%</span>
                         </div>
-                        <div class="w-full bg-gray-700 rounded-full h-2">
-                            <div class="${getBarColorClass(engine.name)} rounded-full h-2" style="width: ${Math.random() * 80 + 10}%"></div>
+                        <div class="w-full bg-gray-700 rounded-full h-2 mb-2">
+                            <div class="${getBarColorClass(engine.name)} rounded-full h-2" style="width: ${barWidth}%"></div>
                         </div>
                         <div class="flex justify-between mt-1 text-xs text-gray-400">
                             <span>0</span>
-                            <span>${Math.random() > 0.5 ? 'Good' : 'Assessing'}</span>
+                            <span style="color: ${getScoreColor(scoreValue)}; font-weight: 600;">${displayLabel}</span>
                             <span>100</span>
                         </div>
                     </div>
@@ -677,11 +797,12 @@
             const container = document.getElementById('allAlertsList');
             
             try {
-                const response = await fetch(`${API_BASE}/dashboard/latest`);
+                // Fetch ALL alerts from dedicated alerts endpoint (not just recent ones)
+                const response = await fetch(`${API_BASE}/alerts`);
                 if (!response.ok) throw new Error('Failed to load alerts');
                 
                 const data = await response.json();
-                renderAllAlerts(data.recent_alerts || []);
+                renderAllAlerts(data.alerts || data.recent_alerts || []);
             } catch (error) {
                 console.error('Alerts load error:', error);
                 container.innerHTML = '<p class="text-red-400">Failed to load alerts</p>';
@@ -810,12 +931,17 @@
             }, 300000); // Auto-refresh every 5 minutes
         }
 
-        function getScoreColor(score) {
+        function getScoreColor(score, dataComplete) {
             if (typeof score !== 'number') return '#6b7280';
-            if (score >= 80) return '#10b981'; // Green - Competitive Compounder
-            if (score >= 60) return '#3b82f6'; // Blue - Strong Business  
-            if (score >= 40) return '#f59e0b'; // Orange - Good Business
-            return '#ef4444'; // Red - Weak Business
+            // Rule 5: Score of 0 is NOT a valid fallback for missing data
+            if (dataComplete === false || dataComplete === '0') return '#f59e0b'; // Yellow = PENDING_DATA
+            // New compounder classification thresholds (spec v1.0)
+            if (score >= 90) return '#06d6a0'; // Exceptional Compounder (Emerald green)
+            if (score >= 80) return '#10b981'; // Strong Compounder (Green)
+            if (score >= 70) return '#3b82f6'; // Potential Compounder (Blue)
+            if (score >= 60) return '#8b5cf6'; // Average (Purple)
+            if (score >= 50) return '#f59e0b'; // Weak (Orange)
+            return '#ef4444'; // Non-Compounder (Red)
         }
 
         function getBarColorClass(name) {

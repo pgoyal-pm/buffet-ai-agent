@@ -9,10 +9,11 @@ Single entry point that:
 5. Persists all results to database
 6. Triggers alerts if thresholds are breached
 
-Designed to be called:
-- After new earnings data arrives
-- On scheduled reconciliation runs
-- Via explicit API calls for manual recalculations
+Design rules:
+- Engines returning None (data unavailable) → signal DATA_INCOMPLETE
+- A score of 0 is NOT valid for missing inputs
+- Classification derives EXCLUSIVELY from the latest Compounder Score
+- STRONG_BUSINESS / WEAK_BUSINESS must NEVER appear in classification
 """
 
 from typing import Dict, Any, List, Optional
@@ -50,6 +51,9 @@ class ScoringOrchestrator:
         # Get config weights
         from app.config import get_config
         self.config = get_config()
+        
+        # Core engines that feed the Compounder Score
+        self.core_engine_names = ['revenue_growth', 'roic', 'margin_expansion', 'reinvestment_runway']
     
     def calculate_all(self, company_id: int, period_id: int) -> Dict[str, Any]:
         """
@@ -65,6 +69,8 @@ class ScoringOrchestrator:
             'engines': {},
             'compounder_score': None,
             'classification': None,
+            'data_complete': True,  # Will be False if any core engine lacks data
+            'missing_data_reasons': [],
             'thesis_momentum': None,
             'alerts_generated': [],
             'success': True,
@@ -88,12 +94,14 @@ class ScoringOrchestrator:
                     
                 except Exception as e:
                     engine_results[name] = {
-                        'score': 0.0,
-                        'weighted_score': 0.0,
+                        'score': None,  # NOT 0 — None signals missing data
+                        'weighted_score': None,
                         'error': str(e),
                         'details': {'message': f'Engine failed: {e}'},
                     }
                     result['errors'].append(f"{name}: {e}")
+                    if name in self.core_engine_names:
+                        result['data_complete'] = False
             
             result['engines'] = engine_results
             
@@ -104,26 +112,27 @@ class ScoringOrchestrator:
             # Calculate thesis momentum (depends on other scores)
             try:
                 comp_score = cs_result.get('compounder_score')
-                momentum_result = self.engines['thesis_momentum'].calculate(
-                    self.db, company_id, period_id, comp_score
-                )
-                
-                result['thesis_momentum'] = momentum_result
-                
-                # Persist thesis momentum
-                self.db.upsert_momentum_score(
-                    company_id=company_id,
-                    period_id=period_id,
-                    prev_period_id=self._get_prev_period_id(company_id, period_id),
-                    momentum_score=momentum_result.get('score', 0),
-                    classification=momentum_result.get('classification', 'UNKNOWN'),
-                    trend_data=momentum_result.get('dimension_details', {}),
-                )
-                
+                if comp_score not in (None, 'DATA_INCOMPLETE'):
+                    momentum_result = self.engines['thesis_momentum'].calculate(
+                        self.db, company_id, period_id, comp_score
+                    )
+                    
+                    result['thesis_momentum'] = momentum_result
+                    
+                    # Persist thesis momentum
+                    self.db.upsert_momentum_score(
+                        company_id=company_id,
+                        period_id=period_id,
+                        prev_period_id=self._get_prev_period_id(company_id, period_id),
+                        momentum_score=momentum_result.get('score', 0),
+                        classification=momentum_result.get('classification', 'UNKNOWN'),
+                        trend_data=momentum_result.get('dimension_details', {}),
+                    )
+                    
             except Exception as e:
                 result['errors'].append(f"thesis_momentum: {e}")
             
-            # Persist compounder score
+            # Persist compounder score (only if we have one)
             if cs_result.get('compounder_score') is not None:
                 self.db.upsert_compounder_score(
                     company_id=company_id,
@@ -136,6 +145,8 @@ class ScoringOrchestrator:
                     weighted_contribution_json=self._json_safe(cs_result.get('weighted_contribution', {})),
                     total_score=cs_result['compounder_score'],
                     classification=cs_result.get('classification'),
+                    data_complete=result.get('data_complete', True),
+                    data_incomplete_reasons=result.get('missing_data_reasons', []),
                     notes=f"Calculated at {datetime.utcnow().isoformat()}",
                 )
             
@@ -161,17 +172,33 @@ class ScoringOrchestrator:
         return result
     
     def _calculate_compounder_score(self, engine_results: Dict) -> Dict[str, Any]:
-        """Calculate final Compounder Score from individual engine scores."""
-        core_engines = ['revenue_growth', 'roic', 'margin_expansion', 'reinvestment_runway']
+        """Calculate final Compounder Score from individual engine scores.
         
+        Rules:
+        - If any core engine returns None (missing data) → DATA_INCOMPLETE
+        - Score of 0 is NEVER treated as valid for a missing engine
+        - Only CLASSIFICATION_THRESHOLDS apply; STRONG/WEAK_BUSINESS forbidden
+        """
+        contributions = {}
         weighted_total = 0.0
         total_weight = 0.0
-        contributions = {}
+        missing_engines = []
         
-        for name in core_engines:
+        for name in self.core_engine_names:
             eng_result = engine_results.get(name, {})
-            score = eng_result.get('score', 0)
+            score = eng_result.get('score')
             weight = eng_result.get('weight', 0)
+            
+            if score is None:
+                # Missing data — do NOT default to 0
+                contributions[name] = {
+                    'raw_score': None,
+                    'weight': weight,
+                    'weighted_contribution': None,
+                    'status': 'MISSING_DATA',
+                }
+                missing_engines.append(name)
+                continue
             
             weighted_contribution = score * weight
             weighted_total += weighted_contribution
@@ -181,13 +208,29 @@ class ScoringOrchestrator:
                 'raw_score': score,
                 'weight': weight,
                 'weighted_contribution': weighted_contribution,
+                'status': 'OK',
+            }
+        
+        # If any core engine is missing data, mark as DATA_INCOMPLETE
+        if missing_engines:
+            return {
+                'compounder_score': None,
+                'classification': 'DATA_INCOMPLETE',
+                'weighted_contribution': contributions,
+                'total_weight': total_weight,
+                'data_complete': False,
+                'missing_data_reasons': [
+                    f"{name} has no available data" for name in missing_engines
+                ],
             }
         
         if total_weight == 0:
+            # All engines returned but somehow no weight was used
             return {
                 'compounder_score': 0.0,
                 'classification': 'INSUFFICIENT_DATA',
-                'weighted_contribution': {},
+                'weighted_contribution': contributions,
+                'total_weight': 0,
             }
         
         compounder_score = weighted_total / total_weight
@@ -198,6 +241,7 @@ class ScoringOrchestrator:
             'classification': classification,
             'weighted_contribution': contributions,
             'total_weight': total_weight,
+            'data_complete': True,
         }
     
     def _get_prev_period_id(self, company_id: int, current_period_id: int) -> Optional[int]:

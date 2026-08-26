@@ -398,29 +398,115 @@ class DatabaseManager:
     
     # ==================== SCORE CALCULATIONS ====================
     
-    def upsert_compounder_score(self, company_id: int, period_id: int,
-                                 version: str, revenue_score: float, roic_score: float,
+    def upsert_compounder_score(self, company_id: int, period_id: int, version: str,
+                                 revenue_score: float, roic_score: float,
                                  margin_score: float, runway_score: float,
                                  weighted_contribution_json: str, total_score: float,
                                  classification: Optional[str] = None,
-                                 notes: Optional[str] = None) -> int:
-        """Insert compounder score. Upsert based on unique (company_id, period_id, version)."""
+                                 notes: Optional[str] = None,
+                                 data_complete: Optional[bool] = None,
+                                 data_incomplete_reasons: Optional[List[str]] = None) -> bool:
+        """Insert compounder score. Upsert based on unique (company_id, period_id, version).
+        
+        Added data_complete flag and data_incomplete_reasons to track whether missing
+        engine inputs prevented a valid score from being computed.
+        """
+        reasons_json = json.dumps(data_incomplete_reasons or [])
         conn = self._get_conn()
         try:
             cursor = conn.execute("""
-                INSERT OR REPLACE INTO compounder_scores(
+                INSERT INTO compounder_scores(
                     company_id, period_id, version,
                     revenue_growth_score, roic_score, margin_expansion_score, reinvestment_runway_score,
-                    weighted_contribution_json, compounder_score, classification, scoring_methodology_notes
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    weighted_contribution_json, compounder_score, classification, scoring_methodology_notes,
+                    data_timestamp, data_complete, data_incomplete_reasons
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)
             """, (company_id, period_id, version,
                   revenue_score, roic_score, margin_score, runway_score,
-                  weighted_contribution_json, total_score, classification, notes))
+                  weighted_contribution_json, total_score, classification, notes,
+                  str(int(data_complete)) if data_complete is not None else '',
+                  reasons_json))
             conn.commit()
-            return cursor.lastrowid
-        except Exception as e:
-            conn.rollback()
-            raise
+            return True  # Inserted
+        except sqlite3.IntegrityError:
+            conn.execute("""
+                UPDATE compounder_scores SET
+                    revenue_growth_score = COALESCE(?, revenue_growth_score),
+                    roic_score = COALESCE(?, roic_score),
+                    margin_expansion_score = COALESCE(?, margin_expansion_score),
+                    reinvestment_runway_score = COALESCE(?, reinvestment_runway_score),
+                    compounder_score = COALESCE(?, compounder_score),
+                    classification = COALESCE(?, classification),
+                    scoring_methodology_notes = COALESCE(?, scoring_methodology_notes),
+                    data_timestamp = CURRENT_TIMESTAMP,
+                    data_complete = COALESCE(?, data_complete),
+                    data_incomplete_reasons = COALESCE(?, data_incomplete_reasons)
+                WHERE company_id = ? AND period_id = ? AND version = ?
+            """, (revenue_score, roic_score, margin_score, runway_score,
+                  total_score, classification, notes,
+                  str(int(data_complete)) if data_complete is not None else '',
+                  reasons_json,
+                  company_id, period_id, version))
+            conn.commit()
+            return False  # Updated existing
+    
+    def compute_dedup_hash(self, company_id: int, alert_type: str, message: str) -> str:
+        """Compute a hash for alert deduplication."""
+        return f"{company_id}|{alert_type or ''}|{message[:120] if message else ''}"
+    
+    def get_latest_scores_per_company(self, limit: int = 50) -> List[Dict]:
+        """Get the LATEST VALID score for EACH company.
+        
+        Returns exactly one row per company — their most recently calculated score.
+        Filters out DATA_INCOMPLETE scores so they don't appear in top compounds.
+        
+        Uses MAX(period_id) per company rather than MAX(id) because:
+        - Scores may be inserted in any order (batch inserts often go reverse chron).
+        - period_id from fiscal_periods is strictly ascending over time.
+        - Therefore highest period_id = most recent fiscal period = "latest".
+        """
+        return self.fetchall("""
+            SELECT cs.*, c.ticker, c.name, c.sector, fp.period_label,
+                   cs.data_complete, cs.data_incomplete_reasons
+            FROM compounder_scores cs
+            JOIN companies c ON c.id = cs.company_id
+            JOIN fiscal_periods fp ON fp.id = cs.period_id
+            WHERE cs.period_id IN (
+                SELECT MAX(cs2.period_id)
+                FROM compounder_scores cs2
+                GROUP BY cs2.company_id
+            )
+              AND cs.classification NOT IN ('DATA_INCOMPLETE', 'INSUFFICIENT_DATA')
+            ORDER BY cs.compounder_score DESC
+            LIMIT ?
+        """, (limit,))
+    
+    def get_company_count_with_valid_scores(self) -> int:
+        """Count DISTINCT companies that have at least one valid Compounder Score.
+        
+        Replaces 'scores_stored' which counted ALL rows including duplicates.
+        Excludes DATA_INCOMPLETE / INSUFFICIENT_DATA classifications.
+        """
+        result = self.scalar("""
+            SELECT COUNT(DISTINCT company_id) FROM compounder_scores
+            WHERE classification NOT IN ('DATA_INCOMPLETE', 'INSUFFICIENT_DATA')
+        """)
+        return result if result else 0
+    
+    def list_all_compounder_scores(self) -> List[Dict]:
+        """Return every raw compounder_score row for history view.
+        
+        This endpoint is intentionally separate from dashboard_latest.
+        Use only when the client needs full historical drill-down.
+        """
+        return self.fetchall("""
+            SELECT cs.*, c.ticker, c.name, c.sector, fp.period_label
+            FROM compounder_scores cs
+            JOIN companies c ON c.id = cs.company_id
+            JOIN fiscal_periods fp ON fp.id = cs.period_id
+            ORDER BY cs.data_timestamp DESC
+            LIMIT 200
+        """)
     
     def get_compounder_scores(self, company_id: int, limit: int = 50) -> List[Dict]:
         """Get all historical scores for a company."""
@@ -613,14 +699,42 @@ class DatabaseManager:
         }
     
     # ==================== ALERTS ====================
-    
+
+    def compute_alert_dedup_hash(self, company_id: int, alert_type: str,
+                                  period: str, metric: str, version: str = 'v1.0') -> str:
+        """Compute deterministic hash for alert dedup key."""
+        import hashlib
+        raw = f"{company_id}|{alert_type}|{period}|{metric}|{version}"
+        return hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+    def is_duplicate_alert(self, dedup_hash: str) -> bool:
+        """Check if an alert with this dedup_hash already exists."""
+        row = self.fetchone("SELECT id FROM alerts WHERE dedup_hash = ?", (dedup_hash,))
+        return row is not None
+
     def create_alert(self, company_id: int, alert_level: str, alert_type: str,
-                     message: str, triggered_by: Optional[str] = None) -> int:
-        """Create an alert."""
+                     message: str, triggered_by: Optional[str] = None,
+                     dedup_metric: Optional[str] = None, dedup_period: Optional[str] = None,
+                     dedup_threshold: Optional[float] = None, dedup_version: str = 'v1.0') -> Optional[int]:
+        """Create an alert with deduplication. Returns alert_id or None if duplicate.
+        
+        Dedup key components: company_id + alert_type + period + metric + version.
+        Two identical conditions are never persisted as separate rows.
+        """
+        dedup_hash = self.compute_alert_dedup_hash(
+            company_id, alert_type,
+            dedup_period or '', dedup_metric or '', dedup_version
+        )
+        
+        if self.is_duplicate_alert(dedup_hash):
+            return None  # Duplicate — silently skip
+        
         cursor = self.execute("""
-            INSERT INTO alerts(company_id, alert_level, alert_type, message, triggered_by)
-            VALUES (?, ?, ?, ?, ?)
-        """, (company_id, alert_level, alert_type, message, triggered_by))
+            INSERT INTO alerts(company_id, alert_level, alert_type, message, triggered_by,
+                               dedup_hash, dedup_metric, dedup_period, dedup_threshold, dedup_version)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (company_id, alert_level, alert_type, message, triggered_by,
+              dedup_hash, dedup_metric, dedup_period, dedup_threshold, dedup_version))
         self.commit()
         return cursor.lastrowid
     
