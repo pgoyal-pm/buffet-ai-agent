@@ -417,7 +417,7 @@ def create_app(db_path: str = "/data/compounder.db") -> FastAPI:
             return {
                 'success': True,
                 'new_weights': {k: config.weights[k] for k in new_weights},
-                'total_weight': config.total_weight,
+                'total_weight': config.weights_sum,
                 'requires_recalculation': True,
                 'note': 'New weights take effect on next calculate call. Existing scores are immutable.',
             }
@@ -450,8 +450,7 @@ def create_app(db_path: str = "/data/compounder.db") -> FastAPI:
                 SELECT cs.*, c.ticker, c.name, c.sector
                 FROM compounder_scores cs
                 JOIN companies c ON c.id = cs.company_id
-                WHERE cs.is_latest = 1
-                ORDER BY cs.total_score DESC
+                ORDER BY cs.compounder_score DESC
                 LIMIT 20
             """)
             
