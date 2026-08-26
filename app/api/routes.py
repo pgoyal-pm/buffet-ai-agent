@@ -461,7 +461,7 @@ def create_app(db_path: str = "/data/compounder.db") -> FastAPI:
             class_changes = db.query("""
                 SELECT a.* FROM alerts a
                 WHERE a.alert_type = 'CLASS_CHANGE'
-                ORDER BY a.created_at DESC
+                ORDER BY a.triggered_at DESC
                 LIMIT 10
             """)
             
