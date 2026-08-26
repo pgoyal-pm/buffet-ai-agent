@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Stock Tracker</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      color: #f0fdf4;
+      background: #0a0f0d;
+      line-height: 1.5;
+      min-height: 100vh;
+    }
+    .ticker-row:hover { background: rgba(255,255,255,0.04); }
+    .input-focus:focus { border-color: #22c55e; box-shadow: 0 0 0 3px rgba(34,197,94,0.15); outline: none; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+    .fade-in { animation: fadeIn 0.2s ease-out; }
+    .loading { opacity: 0.5; pointer-events: none; }
+  </style>
+</head>
+<body class="flex items-start justify-center px-4 py-12 sm:py-20">
+
+  <div class="w-full max-w-lg">
+
+    <!-- Header -->
+    <div class="mb-8 text-center">
+      <h1 class="text-2xl font-semibold tracking-tight mb-1">Stock Tracker</h1>
+      <p class="text-sm text-gray-500">Synced across all your devices.</p>
+    </div>
+
+    <!-- Input -->
+    <form id="add-form" class="flex gap-2 mb-6">
+      <input
+        id="ticker-input"
+        type="text"
+        placeholder="e.g. AAPL, GOOGL, TCS..."
+        maxlength="10"
+        autocomplete="off"
+        spellcheck="false"
+        class="input-focus flex-1 rounded-lg border border-gray-700 bg-gray-800/60 px-4 py-2.5 text-base text-white placeholder-gray-500 transition hover:border-gray-600"
+      />
+      <button
+        type="submit"
+        class="rounded-lg bg-green-600 px-5 py-2.5 text-sm font-medium text-white shadow-sm transition hover:bg-green-500 active:bg-green-700 disabled:opacity-40"
+        id="add-btn"
+      >Add</button>
+    </form>
+
+    <!-- Count bar -->
+    <div class="flex items-center justify-between mb-3 px-1">
+      <span class="text-xs text-gray-500" id="count-label">Loading...</span>
+      <button
+        id="refresh-btn"
+        class="text-xs text-gray-500 underline decoration-dotted underline-offset-2 transition hover:text-green-400"
+      >Refresh prices</button>
+    </div>
+
+    <!-- List -->
+    <ul id="ticker-list" class="space-y-1"></ul>
+
+    <!-- Empty state -->
+    <div id="empty-state" class="mt-10 text-center hidden">
+      <div class="inline-flex h-14 w-14 rounded-full border border-gray-800 bg-gray-800/40 items-center justify-center mb-3">
+        <svg class="h-6 w-6 text-gray-600" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25H12"/>
+        </svg>
+      </div>
+      <p class="text-sm text-gray-500">Your list is empty.</p>
+      <p class="text-xs text-gray-600 mt-1">Type a symbol above and press Enter.</p>
+    </div>
+
+  </div>
+
+<script>
+(async function () {
+  const BASE = window.location.origin;
+  const input   = document.getElementById('ticker-input');
+  const form    = document.getElementById('add-form');
+  const listEl  = document.getElementById('ticker-list');
+  const countEl = document.getElementById('count-label');
+  const clearBtn = document.getElementById('clear-all-btn');
+  const emptyEl = document.getElementById('empty-state');
+  const addBtn  = document.getElementById('add-btn');
+  const refreshBtn = document.getElementById('refresh-btn');
+
+  /* ── API helpers ─────────────────────────────── */
+  async function api(path, opts = {}) {
+    const res = await fetch(`${BASE}${path}`, { ...opts, headers: { 'Content-Type': 'application/json' }, });
+    return res.json();
+  }
+
+  /* ── Render ──────────────────────────────────── */
+  function render(watchlist) {
+    listEl.innerHTML = '';
+    if (watchlist.length === 0) {
+      emptyEl.classList.remove('hidden');
+      countEl.textContent = 'No stocks tracked';
+      addBtn.disabled = true;
+    } else {
+      emptyEl.classList.add('hidden');
+      addBtn.disabled = false;
+      countEl.textContent = `${watchlist.length} stock${watchlist.length !== 1 ? 's' : ''} tracked`;
+      watchlist.forEach(function (item, i) {
+        const li = document.createElement('li');
+        li.className = 'ticker-row fade-in flex items-center justify-between rounded-lg px-4 py-2.5';
+        li.style.animationDelay = (i * 0.02) + 's';
+
+        // Badge + quantity info
+        let badge = item.ticker.toUpperCase();
+        if (item.quantity) badge += ` · qty ${item.quantity}`;
+        
+        const span = document.createElement('span');
+        span.className = 'inline-block rounded bg-gray-800 px-2.5 py-0.5 text-xs font-mono text-gray-400 mr-3';
+        span.textContent = badge;
+
+        // Remove button
+        const removeBtn = document.createElement('button');
+        removeBtn.className = 'text-gray-600 hover:text-red-400 transition p-0.5 rounded';
+        removeBtn.title = 'Remove';
+        removeBtn.innerHTML = '<svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>';
+        removeBtn.addEventListener('click', async function () {
+          try { await api(`/api/watchlist/${item.ticker}`, { method: 'DELETE' }); refresh(); }
+          catch(e) { flash('Failed to remove', 'red'); }
+        });
+
+        li.appendChild(span);
+        li.appendChild(removeBtn);
+        listEl.appendChild(li);
+      });
+    }
+  }
+
+  /* ── Fetch & refresh ─────────────────────────── */
+  async function refresh() {
+    form.classList.add('loading');
+    try {
+      const data = await api('/api/watchlist');
+      render(data.watchlist || []);
+    } catch(e) {
+      console.error('Fetch failed:', e);
+      countEl.textContent = 'Error loading list';
+    } finally {
+      form.classList.remove('loading');
+    }
+  }
+
+  /* ── Add ─────────────────────────────────────── */
+  async function addTicker(raw) {
+    const t = raw.trim().toUpperCase();
+    if (!t) return;
+    if (!/^[A-Za-z0-9.\-]+$/.test(t)) { flash('Invalid symbol.', 'red'); return; }
+    
+    form.classList.add('loading');
+    try {
+      // Check for duplicates first
+      const current = await api('/api/watchlist');
+      const exists = current.watchlist.some(item => item.ticker.toUpperCase() === t);
+      if (exists) { flash('Already tracked.', 'yellow'); return; }
+      
+      await api('/api/watchlist', {
+        method: 'POST',
+        body: JSON.stringify({ ticker: t, quantity: null, buy_price: null })
+      });
+      input.value = '';
+      await refresh();
+      flash('Added ✓', 'green');
+    } catch(e) {
+      console.error('Add failed:', e);
+      flash('Failed to add.', 'red');
+    } finally {
+      form.classList.remove('loading');
+    }
+  }
+
+  /* ── Refresh prices ──────────────────────────── */
+  async function refreshPrices() {
+    refreshBtn.textContent = 'Refreshing...';
+    refreshBtn.disabled = true;
+    try {
+      await api('/api/refresh');
+      await refresh();
+      flash('Prices refreshed', 'green');
+    } catch(e) {
+      console.error('Price refresh failed:', e);
+      flash('Price fetch failed', 'red');
+    } finally {
+      refreshBtn.textContent = 'Refresh prices';
+      refreshBtn.disabled = false;
+    }
+  }
+
+  /* ── Events ──────────────────────────────────── */
+  form.addEventListener('submit', function (e) {
+    e.preventDefault();
+    addTicker(input.value);
+  });
+
+  input.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') { e.preventDefault(); addTicker(input.value); }
+  });
+
+  refreshBtn.addEventListener('click', refreshPrices);
+
+  /* ── Toast ───────────────────────────────────── */
+  function flash(msg, color) {
+    var old = document.querySelector('.toast-flash');
+    if (old) old.remove();
+    var div = document.createElement('div');
+    div.className = 'toast-flash fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-full px-4 py-2 text-xs font-medium text-white shadow-lg';
+    div.style.background = color === 'green' ? '#15803d' : color === 'red' ? '#b91c1c' : '#854d0e';
+    div.textContent = msg;
+    document.body.appendChild(div);
+    setTimeout(function () { div.style.opacity = '0'; div.style.transition = 'opacity 0.25s'; }, 700);
+    setTimeout(function () { div.remove(); }, 1000);
+  }
+
+  /* ── Load on start ──────────────────────────── */
+  refresh();
+  input.focus();
+})();
+</script>
+
+</body>
+</html>
