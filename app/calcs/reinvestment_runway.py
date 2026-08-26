@@ -39,7 +39,7 @@ class ReinvestmentRunwayEngine(ScoringEngine):
         
         Returns comprehensive assessment with qualitative and quantitative factors.
         """
-        metrics = self._get_financial_data(db, company_id)
+        metrics = self._get_financial_data(db, company_id, limit_period_id=period_id)
         
         if not metrics:
             return {
@@ -118,17 +118,24 @@ class ReinvestmentRunwayEngine(ScoringEngine):
             'confidence': confidence,
         }
     
-    def _get_financial_data(self, db, company_id: int) -> List[Dict]:
-        """Fetch ordered financial data for runway analysis."""
-        periods = db.query("""
+    def _get_financial_data(self, db, company_id: int, limit_period_id: Optional[int] = None) -> List[Dict]:
+        """Fetch ordered financial data for runway analysis, scoped to period_id if provided."""
+        if limit_period_id:
+            where_clause = "WHERE mo.company_id = ? AND fp.id <= ?"
+            params = (company_id, limit_period_id)
+        else:
+            where_clause = "WHERE mo.company_id = ?"
+            params = (company_id,)
+        
+        periods = db.query(f"""
             SELECT fp.id as period_id, mo.metric_key, mo.value,
                    fp.fiscal_year, fp.fiscal_quarter, fp.report_date,
                    fp.period_label
             FROM fiscal_periods fp
             JOIN metric_observations mo ON mo.period_id = fp.id
-            WHERE mo.company_id = ?
+            {where_clause}
             ORDER BY fp.fiscal_year DESC, fp.fiscal_quarter DESC
-        """, (company_id,))
+        """, params)
         
         # Organize by period
         result = {}

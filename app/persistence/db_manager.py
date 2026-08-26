@@ -330,17 +330,71 @@ class DatabaseManager:
                 ORDER BY mo.period_id, mo.metric_key
             """, (company_id,))
     
-    def get_metric_history(self, company_id: int, metric_key: str) -> List[Dict]:
-        """Get time series for a single metric across all periods."""
-        return self.fetchall("""
+    def get_metric_history(self, company_id: int, metric_key: str, limit_period_id: Optional[int] = None) -> List[Dict]:
+        """
+        Get time series for a single metric across periods.
+        
+        Args:
+            company_id: Company ID
+            metric_key: Metric key name (e.g., 'revenue', 'net_income')
+            limit_period_id: If set, only include periods with id <= this value.
+                           This ensures scoring for period N only uses data through period N.
+        """
+        if limit_period_id:
+            where_clause = "WHERE mo.company_id = ? AND mo.metric_key = ? AND fp.id <= ?"
+            params = (company_id, metric_key, limit_period_id)
+        else:
+            where_clause = "WHERE mo.company_id = ? AND mo.metric_key = ?"
+            params = (company_id, metric_key)
+        
+        return self.fetchall(f"""
             SELECT mo.id as observation_id, mo.metric_key, mo.value, mo.unit, mo.scale,
                    mo.reported_or_derived, mo.certainty, mo.provenance_section,
-                   fp.fiscal_year, fp.fiscal_quarter, fp.report_date, fp.period_label
+                   fp.fiscal_year, fp.fiscal_quarter, fp.report_date, fp.period_label,
+                   fp.id as period_id
             FROM metric_observations mo
             JOIN fiscal_periods fp ON fp.id = mo.period_id
-            WHERE mo.company_id = ? AND mo.metric_key = ?
-            ORDER BY fp.report_date ASC
-        """, (company_id, metric_key))
+            {where_clause}
+            ORDER BY fp.report_date DESC
+        """, params)
+    
+    def get_metrics_for_all_keys(self, company_id: int, metric_keys: List[str], limit_period_id: Optional[int] = None) -> Dict[int, Dict[str, float]]:
+        """
+        Get multiple metrics across periods, grouped by period_id.
+        
+        Returns: {period_id: {metric_key: value}, ...}
+        
+        Used by ROIC, margin_expansion, reinvestment_runway engines.
+        """
+        if not metric_keys:
+            return {}
+        
+        placeholders = ','.join(['?' for _ in metric_keys])
+        if limit_period_id:
+            period_filter = "AND fp.id <= ?"
+            extra_param = (limit_period_id,)
+        else:
+            period_filter = ""
+            extra_param = ()
+        
+        rows = self.fetchall(f"""
+            SELECT mo.metric_key, mo.value, mo.reported_or_derived, mo.certainty,
+                   mo.provenance_section, fp.fiscal_year, fp.fiscal_quarter, 
+                   fp.report_date, fp.period_label, fp.id as period_id
+            FROM metric_observations mo
+            JOIN fiscal_periods fp ON fp.id = mo.period_id
+            WHERE mo.company_id = ? AND mo.metric_key IN ({placeholders}) {period_filter}
+            ORDER BY fp.report_date DESC
+        """, [company_id] + metric_keys + list(extra_param))
+        
+        result: dict = {}
+        for row in rows:
+            pid = row['period_id']
+            if pid not in result:
+                result[pid] = {'fiscal_year': row.get('fiscal_year'), 'report_date': row.get('report_date'), 'period_label': row.get('period_label')}
+            result[pid][row['metric_key']] = row.get('value')
+        
+        return result
     
     # ==================== SCORE CALCULATIONS ====================
     

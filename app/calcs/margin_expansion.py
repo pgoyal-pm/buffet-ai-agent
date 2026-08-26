@@ -37,7 +37,7 @@ class MarginExpansionEngine(ScoringEngine):
         Returns detailed analysis of margin trends with structural vs temporary
         classification.
         """
-        metrics = self._get_financial_data(db, company_id)
+        metrics = self._get_financial_data(db, company_id, limit_period_id=period_id)
         
         if len(metrics) < 2:
             return {
@@ -49,7 +49,7 @@ class MarginExpansionEngine(ScoringEngine):
             }
         
         # Extract all margin types for latest periods
-        sorted_periods = sorted(metrics.values(), key=lambda x: x.get('report_date', ''))
+        sorted_periods = sorted(metrics.values(), key=lambda x: x.get('report_date', ''), reverse=True)
         latest = sorted_periods[-1]
         prior_yoy = sorted_periods[-2] if len(sorted_periods) >= 2 else None
         
@@ -162,17 +162,24 @@ class MarginExpansionEngine(ScoringEngine):
             'confidence': self._compute_confidence(len(sorted_periods)),
         }
     
-    def _get_financial_data(self, db, company_id: int) -> Dict[int, Dict]:
-        """Fetch all financial data organized by period."""
-        periods = db.query("""
+    def _get_financial_data(self, db, company_id: int, limit_period_id: Optional[int] = None) -> Dict[int, Dict]:
+        """Fetch all financial data organized by period, scoped to period_id if provided."""
+        if limit_period_id:
+            where_clause = "WHERE mo.company_id = ? AND fp.id <= ?"
+            params = (company_id, limit_period_id)
+        else:
+            where_clause = "WHERE mo.company_id = ?"
+            params = (company_id,)
+        
+        periods = db.query(f"""
             SELECT fp.id as period_id, mo.metric_key, mo.value,
                    mo.reported_or_derived, mo.certainty,
                    fp.fiscal_year, fp.fiscal_quarter, fp.report_date
             FROM fiscal_periods fp
             JOIN metric_observations mo ON mo.period_id = fp.id
-            WHERE mo.company_id = ?
+            {where_clause}
             ORDER BY fp.fiscal_year, fp.fiscal_quarter
-        """, (company_id,))
+        """, params)
         
         result = {}
         for row in periods:

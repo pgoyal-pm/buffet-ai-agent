@@ -38,8 +38,8 @@ class RevenueGrowthEngine(ScoringEngine):
         
         Returns detailed dict with raw values, normalized scores, and weighted contribution.
         """
-        # Get all revenue observations for this company
-        revenues = self._get_revenue_history(db, company_id)
+        # Get all revenue observations for this company up to the target period
+        revenues = self._get_revenue_history(db, company_id, limit_period_id=period_id)
         
         if len(revenues) < 2:
             return {
@@ -64,7 +64,7 @@ class RevenueGrowthEngine(ScoringEngine):
         qoq_values = []
         yoy_values = []
         
-        sorted_revs = sorted(revenues, key=lambda x: x['period_date'])
+        sorted_revs = sorted(revenues, key=lambda x: x['period_date'] or '', reverse=True)
         
         for i, rev in enumerate(sorted_revs):
             value = rev.get('value') or rev.get('metric_value')
@@ -179,13 +179,13 @@ class RevenueGrowthEngine(ScoringEngine):
             'confidence': self._compute_confidence(len(revenues)),
         }
     
-    def _get_revenue_history(self, db, company_id: int) -> List[Dict]:
-        """Get all revenue observations for a company."""
-        metrics = db.get_metric_history(company_id, 'revenue')
+    def _get_revenue_history(self, db, company_id: int, limit_period_id: Optional[int] = None) -> List[Dict]:
+        """Get revenue observations for a company, scoped to period_id if provided."""
+        metrics = db.get_metric_history(company_id, 'revenue', limit_period_id=limit_period_id)
         if not metrics:
             # Try alternative names
             for alt in ['total_revenue', 'net_sales', 'sales_revenue']:
-                metrics = db.get_metric_history(company_id, alt)
+                metrics = db.get_metric_history(company_id, alt, limit_period_id=limit_period_id)
                 if metrics:
                     break
         

@@ -29,8 +29,8 @@ class ROICEngine(ScoringEngine):
         Returns comprehensive dict with current ROIC, incremental ROIC values,
         and normalized scores.
         """
-        # Get required financial observations
-        metrics = self._get_financial_data(db, company_id)
+        # Get required financial observations scoped to target period
+        metrics = self._get_financial_data(db, company_id, limit_period_id=period_id)
         
         if not metrics or len(metrics) < 2:
             return {
@@ -86,17 +86,23 @@ class ROICEngine(ScoringEngine):
             'confidence': self._compute_confidence(len(periods)),
         }
     
-    def _get_financial_data(self, db, company_id: int) -> Dict[int, Dict]:
-        """Fetch all available financial data for this company."""
-        periods = db.query("""
+    def _get_financial_data(self, db, company_id: int, limit_period_id: Optional[int] = None) -> Dict[int, Dict]:
+        """Fetch all available financial data for this company, scoped to period_id if provided."""
+        if limit_period_id:
+            where_clause = "WHERE mo.company_id = ? AND fp.id <= ?"
+        else:
+            where_clause = "WHERE mo.company_id = ?"
+        params = (company_id, limit_period_id) if limit_period_id else (company_id,)
+        
+        periods = db.query(f"""
             SELECT fp.id as period_id, mo.metric_key, mo.value, 
                    mo.reported_or_derived, mo.certainty,
                    fp.fiscal_year, fp.fiscal_quarter, fp.report_date
             FROM fiscal_periods fp
             JOIN metric_observations mo ON mo.period_id = fp.id
-            WHERE mo.company_id = ?
+            {where_clause}
             ORDER BY fp.fiscal_year, fp.fiscal_quarter
-        """, (company_id,))
+        """, params)
         
         # Organize by period
         result = {}
