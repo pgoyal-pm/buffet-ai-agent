@@ -368,7 +368,7 @@ class DatabaseManager:
             conn.rollback()
             raise
     
-    def get_compounder_scores(self, company_id: int) -> List[Dict]:
+    def get_compounder_scores(self, company_id: int, limit: int = 50) -> List[Dict]:
         """Get all historical scores for a company."""
         return self.fetchall("""
             SELECT cs.*, fp.period_label, fp.report_date
@@ -376,7 +376,8 @@ class DatabaseManager:
             JOIN fiscal_periods fp ON fp.id = cs.period_id
             WHERE cs.company_id = ?
             ORDER BY cs.data_timestamp DESC
-        """, (company_id,))
+            LIMIT ?
+        """, (company_id, limit))
     
     def get_latest_compounder_score(self, company_id: int) -> Optional[Dict]:
         """Get the most recent score for a company."""
