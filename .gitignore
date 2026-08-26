@@ -1,18 +1,6 @@
-# Python
+data/
 __pycache__/
-*.py[cod]
-*.pyo
-*.so
+*.pyc
+logs/
 .env
-venv/
-env/
-
-# IDE
-.idea/
-.vscode/
-*.swp
-*.swo
-
-# OS
 .DS_Store
-Thumbs.db
