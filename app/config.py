@@ -194,6 +194,16 @@ class Config:
             if score >= threshold:
                 return label
         return CLASSIFICATION_THRESHOLDS[-1][1]
+    
+    @property
+    def normalization_params(self) -> Dict[str, Any]:
+        """Returns the normalization thresholds used by scoring engines."""
+        return {
+            "revenue_growth": REVENUE_GROWTH_PARAMS,
+            "roic_benchmarks": ROIC_BENCHMARKS,
+            "margin_benchmarks": MARGIN_BENCHMARKS,
+            "classifications": {str(t): l for t, l in CLASSIFICATION_THRESHOLDS},
+        }
 
 
 def get_config():
