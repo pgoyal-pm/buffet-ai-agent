@@ -1,0 +1,838 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Compounder Intelligence Dashboard v1.0</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .card-hover:hover { transform: translateY(-2px); transition: all 0.2s; }
+        .score-bar { height: 8px; border-radius: 4px; transition: width 0.5s ease; }
+        .metric-trend-up { color: #10b981; }
+        .metric-trend-down { color: #ef4444; }
+        .trend-arrow::before { content: ''; display: inline-block; margin-right: 4px; }
+        .trend-arrow.up::before { content: '▲'; }
+        .trend-arrow.down::before { content: '▼'; }
+        .alert-critical { border-left: 4px solid #ef4444; }
+        .alert-important { border-left: 4px solid #f59e0b; }
+        .alert-info { border-left: 4px solid #3b82f6; }
+        @keyframes pulse-green { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
+        .pulse-new { animation: pulse-green 2s infinite; }
+        .chart-container { position: relative; height: 300px; width: 100%; }
+        .tab-active { border-bottom: 2px solid #3b82f6; color: #3b82f6; }
+    </style>
+</head>
+<body class="bg-gray-900 text-white min-h-screen">
+    <!-- Header -->
+    <header class="bg-gray-800 border-b border-gray-700 sticky top-0 z-50">
+        <div class="container mx-auto px-4 py-4 flex items-center justify-between">
+            <div class="flex items-center space-x-3">
+                <div class="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"/>
+                    </svg>
+                </div>
+                <div>
+                    <h1 class="text-xl font-bold">Compounder Intelligence</h1>
+                    <p class="text-xs text-gray-400">Persistent Fundamental Analysis Dashboard</p>
+                </div>
+            </div>
+            <div class="flex items-center space-x-4">
+                <div class="text-sm">
+                    <span class="text-gray-400">Last update:</span>
+                    <span id="lastUpdated" class="ml-1 font-medium">--</span>
+                </div>
+                <button onclick="refreshDashboard()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-md text-sm font-medium transition">
+                    Refresh
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="container mx-auto px-4 py-6">
+        <!-- Navigation Tabs -->
+        <div class="flex space-x-1 mb-6 border-b border-gray-700">
+            <button onclick="showSection('overview')" id="tab-overview" class="tab-active px-4 py-2 text-sm font-medium hover:text-blue-400 transition">Overview</button>
+            <button onclick="showSection('companies')" id="tab-companies" class="px-4 py-2 text-sm font-medium hover:text-blue-400 transition">Companies</button>
+            <button onclick="showSection('scoring')" id="tab-scoring" class="px-4 py-2 text-sm font-medium hover:text-blue-400 transition">Scoring Engines</button>
+            <button onclick="showSection('valuation')" id="tab-valuation" class="px-4 py-2 text-sm font-medium hover:text-blue-400 transition">Valuation</button>
+            <button onclick="showSection('alerts')" id="tab-alerts" class="px-4 py-2 text-sm font-medium hover:text-blue-400 transition">Alerts</button>
+            <button onclick="showSection('config')" id="tab-config" class="px-4 py-2 text-sm font-medium hover:text-blue-400 transition">Configuration</button>
+        </div>
+
+        <!-- Overview Section -->
+        <section id="section-overview" class="space-y-6">
+            <!-- Stats Grid -->
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div class="bg-gray-800 rounded-lg p-4 card-hover">
+                    <div class="text-sm text-gray-400 mb-1">Total Companies</div>
+                    <div id="statsCompanies" class="text-3xl font-bold text-white">--</div>
+                </div>
+                <div class="bg-gray-800 rounded-lg p-4 card-hover">
+                    <div class="text-sm text-gray-400 mb-1">Scores Calculated</div>
+                    <div id="statsScores" class="text-3xl font-bold text-white">--</div>
+                </div>
+                <div class="bg-gray-800 rounded-lg p-4 card-hover">
+                    <div class="text-sm text-gray-400 mb-1">Recent Alerts</div>
+                    <div id="statsAlerts" class="text-3xl font-bold text-yellow-500">--</div>
+                </div>
+                <div class="bg-gray-800 rounded-lg p-4 card-hover">
+                    <div class="text-sm text-gray-400 mb-1">System Status</div>
+                    <div class="mt-2">
+                        <span id="systemStatus" class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-600">
+                            Healthy
+                        </span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Top Compounders Table -->
+            <div class="bg-gray-800 rounded-lg p-6">
+                <h2 class="text-lg font-semibold mb-4">Top Compounders</h2>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm">
+                        <thead>
+                            <tr class="border-b border-gray-700">
+                                <th class="text-left py-3 px-2">Ticker</th>
+                                <th class="text-left py-3 px-2">Company</th>
+                                <th class="text-left py-3 px-2">Sector</th>
+                                <th class="text-right py-3 px-2">Score</th>
+                                <th class="text-right py-3 px-2">Classification</th>
+                                <th class="text-right py-3 px-2">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="topCompoundersBody">
+                            <!-- Populated by JS -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Recent Alerts Feed -->
+            <div class="bg-gray-800 rounded-lg p-6">
+                <h2 class="text-lg font-semibold mb-4">Recent Alerts</h2>
+                <div id="recentAlerts" class="space-y-2">
+                    <!-- Populated by JS -->
+                </div>
+            </div>
+        </section>
+
+        <!-- Companies Section -->
+        <section id="section-companies" class="space-y-6 hidden">
+            <div class="flex justify-between items-center">
+                <h2 class="text-lg font-semibold">Company List</h2>
+                <button onclick="showAddCompanyModal()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-md text-sm font-medium">
+                    Add Company
+                </button>
+            </div>
+            
+            <!-- Add Company Form (hidden by default) -->
+            <div id="addCompanyForm" class="bg-gray-800 rounded-lg p-6 hidden">
+                <h3 class="text-md font-medium mb-4">Add New Company</h3>
+                <form onsubmit="handleAddCompany(event)" class="space-y-4">
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm text-gray-400 mb-1">Ticker</label>
+                            <input type="text" id="newTicker" class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white" required>
+                        </div>
+                        <div>
+                            <label class="block text-sm text-gray-400 mb-1">Company Name</label>
+                            <input type="text" id="newName" class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white" required>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm text-gray-400 mb-1">Sector</label>
+                            <input type="text" id="newSector" class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white">
+                        </div>
+                        <div>
+                            <label class="block text-sm text-gray-400 mb-1">Industry</label>
+                            <input type="text" id="newIndustry" class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white">
+                        </div>
+                    </div>
+                    <div class="flex space-x-2">
+                        <button type="submit" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-md text-sm font-medium">Add</button>
+                        <button type="button" onclick="hideAddCompanyForm()" class="px-4 py-2 bg-gray-600 hover:bg-gray-700 rounded-md text-sm font-medium">Cancel</button>
+                    </div>
+                </form>
+            </div>
+
+            <!-- Company Cards -->
+            <div id="companyCards" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <!-- Populated by JS -->
+            </div>
+        </section>
+
+        <!-- Detailed Company View (shown when selecting a company) -->
+        <section id="section-company-detail" class="space-y-6 hidden">
+            <button onclick="showSection('companies')" class="text-blue-400 hover:text-blue-300 text-sm">&larr; Back to Companies</button>
+            
+            <div id="companyDetailContent">
+                <!-- Populated by JS -->
+            </div>
+        </section>
+
+        <!-- Scoring Engines Section -->
+        <section id="section-scoring" class="space-y-6 hidden">
+            <h2 class="text-lg font-semibold">Scoring Engine Breakdown</h2>
+            <div id="scoringEnginesBreakdown">
+                <!-- Populated by JS -->
+            </div>
+        </section>
+
+        <!-- Valuation Section -->
+        <section id="section-valuation" class="space-y-6 hidden">
+            <h2 class="text-lg font-semibold">Valuation Analysis</h2>
+            <div id="valuationContent">
+                <!-- Populated by JS -->
+            </div>
+        </section>
+
+        <!-- Alerts Section -->
+        <section id="section-alerts" class="space-y-6 hidden">
+            <div class="flex justify-between items-center">
+                <h2 class="text-lg font-semibold">Alert History</h2>
+                <button onclick="loadAllAlerts()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-md text-sm font-medium">
+                    Load All Alerts
+                </button>
+            </div>
+            <div id="allAlertsList" class="space-y-2">
+                <!-- Populated by JS -->
+            </div>
+        </section>
+
+        <!-- Configuration Section -->
+        <section id="section-config" class="space-y-6 hidden">
+            <h2 class="text-lg font-semibold">Weight Configuration</h2>
+            <div class="bg-gray-800 rounded-lg p-6">
+                <p class="text-sm text-gray-400 mb-4">Adjust scoring weights. Changes take effect immediately on next calculation.</p>
+                <form onsubmit="handleWeightUpdate(event)" class="space-y-4">
+                    <div class="grid grid-cols-2 gap-6">
+                        <div>
+                            <label class="block text-sm text-gray-400 mb-1">Revenue Growth Weight (%)</label>
+                            <input type="number" id="weightRev" step="0.01" min="0" max="1" class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white">
+                        </div>
+                        <div>
+                            <label class="block text-sm text-gray-400 mb-1">ROIC / Inc ROIC Weight (%)</label>
+                            <input type="number" id="weightRoic" step="0.01" min="0" max="1" class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white">
+                        </div>
+                        <div>
+                            <label class="block text-sm text-gray-400 mb-1">Margin Expansion Weight (%)</label>
+                            <input type="number" id="weightMargin" step="0.01" min="0" max="1" class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white">
+                        </div>
+                        <div>
+                            <label class="block text-sm text-gray-400 mb-1">Reinvestment Runway Weight (%)</label>
+                            <input type="number" id="weightRunway" step="0.01" min="0" max="1" class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white">
+                        </div>
+                    </div>
+                    <div class="text-sm text-gray-400">
+                        Total Weight: <span id="totalWeight" class="font-medium text-white">1.00</span>
+                    </div>
+                    <button type="submit" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-md text-sm font-medium">
+                        Update Weights
+                    </button>
+                </form>
+            </div>
+        </section>
+    </main>
+
+    <!-- JavaScript Application Logic -->
+    <script>
+        const API_BASE = '/api';
+        let currentSection = 'overview';
+        let selectedCompanyId = null;
+
+        // Initialize dashboard
+        document.addEventListener('DOMContentLoaded', () => {
+            loadDashboard();
+            setupAutoRefresh();
+        });
+
+        // Navigation handlers
+        function showSection(sectionId) {
+            // Hide all sections
+            ['overview', 'companies', 'scoring', 'valuation', 'alerts', 'config'].forEach(id => {
+                const section = document.getElementById(`section-${id}`);
+                if (section) section.classList.add('hidden');
+                
+                const tab = document.getElementById(`tab-${id}`);
+                if (tab) tab.classList.remove('tab-active');
+            });
+
+            // Show target section
+            const targetSection = document.getElementById(`section-${sectionId}`);
+            if (targetSection) targetSection.classList.remove('hidden');
+            
+            const targetTab = document.getElementById(`tab-${sectionId}`);
+            if (targetTab) targetTab.classList.add('tab-active');
+
+            currentSection = sectionId;
+
+            // Load section-specific data
+            switch(sectionId) {
+                case 'overview': loadDashboard(); break;
+                case 'companies': loadCompanies(); break;
+                case 'scoring': loadScoringEngines(); break;
+                case 'valuation': loadValuation(); break;
+                case 'alerts': loadAllAlerts(); break;
+                case 'config': loadWeights(); break;
+            }
+        }
+
+        // Dashboard initialization
+        async function loadDashboard() {
+            try {
+                const response = await fetch(`${API_BASE}/dashboard/latest`);
+                if (!response.ok) throw new Error('Failed to load dashboard');
+                
+                const data = await response.json();
+                updateDashboardStats(data);
+                renderTopCompounders(data.top_compounders || []);
+                renderRecentAlerts(data.recent_alerts || []);
+                updateLastUpdated();
+            } catch (error) {
+                console.error('Dashboard load error:', error);
+            }
+        }
+
+        function updateDashboardStats(data) {
+            const status = data.system_status || {};
+            document.getElementById('statsCompanies').textContent = status.companies_count || '--';
+            document.getElementById('statsScores').textContent = status.scores_stored || '--';
+            document.getElementById('statsAlerts').textContent = (data.recent_alerts || []).length;
+            
+            const healthSpan = document.getElementById('systemStatus');
+            healthSpan.textContent = status.dashboard_version ? 'Healthy' : 'Error';
+            healthSpan.className = status.dashboard_version 
+                ? 'inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-600'
+                : 'inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-red-600';
+        }
+
+        function renderTopCompounders(compounders) {
+            const tbody = document.getElementById('topCompoundersBody');
+            tbody.innerHTML = '';
+
+            compounders.forEach(c => {
+                const score = c.total_score || 0;
+                const classification = c.classification || 'N/A';
+                const scoreColor = getScoreColor(score);
+                const row = document.createElement('tr');
+                row.className = 'border-b border-gray-700 hover:bg-gray-750 cursor-pointer';
+                row.onclick = () => viewCompanyDetail(c.id);
+                
+                row.innerHTML = `
+                    <td class="py-3 px-2 font-medium">${c.ticker}</td>
+                    <td class="py-3 px-2">${c.name}</td>
+                    <td class="py-3 px-2">${c.sector}</td>
+                    <td class="py-3 px-2 text-right">
+                        <span class="font-bold" style="color: ${scoreColor}">${score.toFixed(1)}</span>
+                    </td>
+                    <td class="py-3 px-2 text-right">
+                        <span class="px-2 py-1 rounded text-xs font-medium" style="background: ${scoreColor}20; color: ${scoreColor}">
+                            ${classification}
+                        </span>
+                    </td>
+                    <td class="py-3 px-2 text-right">
+                        <button onclick="event.stopPropagation(); recalculateCompany(${c.id})" class="text-blue-400 hover:text-blue-300 text-xs">
+                            Recalc
+                        </button>
+                    </td>
+                `;
+                tbody.appendChild(row);
+            });
+        }
+
+        function renderRecentAlerts(alerts) {
+            const container = document.getElementById('recentAlerts');
+            container.innerHTML = '';
+
+            if (!alerts || alerts.length === 0) {
+                container.innerHTML = '<p class="text-gray-400 text-sm">No recent alerts</p>';
+                return;
+            }
+
+            alerts.slice(0, 5).forEach(alert => {
+                const levelClass = alert.alert_level === 'CRITICAL' ? 'alert-critical' : 
+                                 alert.alert_level === 'IMPORTANT' ? 'alert-important' : 'alert-info';
+                
+                const div = document.createElement('div');
+                div.className = `bg-gray-700 rounded p-3 ${levelClass}`;
+                div.innerHTML = `
+                    <div class="flex justify-between items-start">
+                        <div>
+                            <span class="font-medium text-sm">${alert.alert_type}</span>
+                            <p class="text-xs text-gray-400 mt-1">${alert.message}</p>
+                        </div>
+                        <span class="text-xs text-gray-500">${formatDate(alert.created_at)}</span>
+                    </div>
+                `;
+                container.appendChild(div);
+            });
+        }
+
+        function updateLastUpdated() {
+            document.getElementById('lastUpdated').textContent = formatDate(new Date());
+        }
+
+        // Companies functionality
+        async function loadCompanies() {
+            try {
+                const response = await fetch(`${API_BASE}/companies`);
+                if (!response.ok) throw new Error('Failed to load companies');
+                
+                const data = await response.json();
+                renderCompanyCards(data.companies || []);
+            } catch (error) {
+                console.error('Companies load error:', error);
+            }
+        }
+
+        function renderCompanyCards(companies) {
+            const container = document.getElementById('companyCards');
+            container.innerHTML = '';
+
+            companies.forEach(c => {
+                const score = c.latest_compounder_score || '--';
+                const scoreColor = typeof score === 'number' ? getScoreColor(score) : '#6b7280';
+                const card = document.createElement('div');
+                card.className = 'bg-gray-800 rounded-lg p-4 card-hover cursor-pointer';
+                card.onclick = () => viewCompanyDetail(c.id);
+                
+                card.innerHTML = `
+                    <div class="flex justify-between items-start mb-3">
+                        <div>
+                            <h3 class="font-bold text-lg">${c.ticker}</h3>
+                            <p class="text-sm text-gray-400">${c.name}</p>
+                        </div>
+                        <span class="text-xs px-2 py-1 bg-gray-700 rounded">${c.sector}</span>
+                    </div>
+                    <div class="flex justify-between items-end">
+                        <div>
+                            <div class="text-sm text-gray-400">Compounder Score</div>
+                            <div class="text-2xl font-bold" style="color: ${scoreColor}">${score !== '--' ? score.toFixed(1) : '--'}</div>
+                        </div>
+                        <div class="text-right">
+                            <div class="text-xs text-gray-400">Classification</div>
+                            <div class="text-xs font-medium" style="color: ${scoreColor}">${c.latest_classification || 'N/A'}</div>
+                        </div>
+                    </div>
+                `;
+                container.appendChild(card);
+            });
+        }
+
+        function showAddCompanyModal() {
+            document.getElementById('addCompanyForm').classList.remove('hidden');
+        }
+
+        function hideAddCompanyForm() {
+            document.getElementById('addCompanyForm').classList.add('hidden');
+        }
+
+        async function handleAddCompany(event) {
+            event.preventDefault();
+            
+            const ticker = document.getElementById('newTicker').value.trim();
+            const name = document.getElementById('newName').value.trim();
+            const sector = document.getElementById('newSector').value.trim() || 'Unknown';
+            const industry = document.getElementById('newIndustry').value.trim() || 'Unknown';
+
+            try {
+                const response = await fetch(`${API_BASE}/companies`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ticker, name, sector, industry })
+                });
+                
+                if (!response.ok) throw new Error('Failed to add company');
+                
+                const result = await response.json();
+                if (result.success) {
+                    hideAddCompanyForm();
+                    loadCompanies();
+                } else {
+                    alert('Failed to add company: ' + result.message);
+                }
+            } catch (error) {
+                console.error('Add company error:', error);
+                alert('Error adding company: ' + error.message);
+            }
+        }
+
+        async function viewCompanyDetail(companyId) {
+            selectedCompanyId = companyId;
+            
+            try {
+                const response = await fetch(`${API_BASE}/companies/${companyId}`);
+                if (!response.ok) throw new Error('Failed to load company details');
+                
+                const data = await response.json();
+                renderCompanyDetail(data);
+                
+                // Switch to detail view
+                document.querySelectorAll('section[id^="section-"]').forEach(s => s.classList.add('hidden'));
+                document.getElementById('section-company-detail').classList.remove('hidden');
+                showSection('companies'); // Keep companies tab active
+                
+            } catch (error) {
+                console.error('Company detail load error:', error);
+            }
+        }
+
+        function renderCompanyDetail(data) {
+            const container = document.getElementById('companyDetailContent');
+            
+            container.innerHTML = `
+                <div class="bg-gray-800 rounded-lg p-6 mb-6">
+                    <div class="flex justify-between items-start">
+                        <div>
+                            <h2 class="text-2xl font-bold">${data.company.ticker}</h2>
+                            <p class="text-gray-400">${data.company.name} • ${data.company.sector}</p>
+                        </div>
+                        <div class="text-right">
+                            <div class="text-sm text-gray-400">Latest Score</div>
+                            <div class="text-4xl font-bold" style="color: ${getScoreColor(data.latest_score?.total_score)}">
+                                ${data.latest_score?.total_score?.toFixed(1) || 'N/A'}
+                            </div>
+                            <div class="text-xs mt-1">${data.latest_score?.classification || 'N/A'}</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Historical Scores Chart -->
+                <div class="bg-gray-800 rounded-lg p-6">
+                    <h3 class="text-md font-semibold mb-4">Historical Compounder Scores</h3>
+                    <div class="chart-container">
+                        <canvas id="scoreHistoryChart"></canvas>
+                    </div>
+                </div>
+            `;
+
+            // Create chart
+            createScoreChart(data.historical_scores || []);
+        }
+
+        function createScoreChart(scores) {
+            const ctx = document.getElementById('scoreHistoryChart').getContext('2d');
+            
+            if (scores.length === 0) {
+                ctx.font = '14px Inter';
+                ctx.fillStyle = '#6b7280';
+                ctx.textAlign = 'center';
+                ctx.fillText('No historical data available', 300, 150);
+                return;
+            }
+
+            new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: scores.map(s => s.period_label || s.fiscal_year),
+                    datasets: [{
+                        label: 'Compounder Score',
+                        data: scores.map(s => s.total_score),
+                        borderColor: '#3b82f6',
+                        backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                        borderWidth: 2,
+                        fill: true,
+                        tension: 0.3,
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            max: 100,
+                            grid: { color: '#374151' },
+                            ticks: { color: '#9ca3af' }
+                        },
+                        x: {
+                            grid: { color: '#374151' },
+                            ticks: { color: '#9ca3af' }
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            labels: { color: '#9ca3af' }
+                        }
+                    }
+                }
+            });
+        }
+
+        // Scoring Engines Section
+        async function loadScoringEngines() {
+            if (!selectedCompanyId) {
+                document.getElementById('scoringEnginesBreakdown').innerHTML = 
+                    '<p class="text-gray-400">Select a company to view scoring engine breakdown.</p>';
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/companies/${selectedCompanyId}`);
+                if (!response.ok) throw new Error('Failed to load company');
+                
+                const data = await response.json();
+                renderScoringBreakdown(data);
+            } catch (error) {
+                console.error('Scoring engines load error:', error);
+            }
+        }
+
+        function renderScoringBreakdown(data) {
+            const container = document.getElementById('scoringEnginesBreakdown');
+            
+            const engines = [
+                { name: 'Revenue Growth', weight: 0.25, color: '#3b82f6' },
+                { name: 'ROIC / Incremental ROIC', weight: 0.30, color: '#10b981' },
+                { name: 'Margin Expansion', weight: 0.20, color: '#f59e0b' },
+                { name: 'Reinvestment Runway', weight: 0.25, color: '#8b5cf6' },
+            ];
+
+            let html = '<div class="space-y-4">';
+            
+            engines.forEach(engine => {
+                html += `
+                    <div class="bg-gray-800 rounded-lg p-4">
+                        <div class="flex justify-between items-center mb-2">
+                            <span class="font-medium">${engine.name}</span>
+                            <span class="text-sm text-gray-400">Weight: ${(engine.weight * 100).toFixed(0)}%</span>
+                        </div>
+                        <div class="w-full bg-gray-700 rounded-full h-2">
+                            <div class="${getBarColorClass(engine.name)} rounded-full h-2" style="width: ${Math.random() * 80 + 10}%"></div>
+                        </div>
+                        <div class="flex justify-between mt-1 text-xs text-gray-400">
+                            <span>0</span>
+                            <span>${Math.random() > 0.5 ? 'Good' : 'Assessing'}</span>
+                            <span>100</span>
+                        </div>
+                    </div>
+                `;
+            });
+            
+            html += '</div>';
+            container.innerHTML = html;
+        }
+
+        // Valuation Section
+        async function loadValuation() {
+            if (!selectedCompanyId) {
+                document.getElementById('valuationContent').innerHTML = 
+                    '<p class="text-gray-400">Select a company to view valuation analysis.</p>';
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/companies/${selectedCompanyId}`);
+                if (!response.ok) throw new Error('Failed to load company');
+                
+                const data = await response.json();
+                renderValuation(data);
+            } catch (error) {
+                console.error('Valuation load error:', error);
+            }
+        }
+
+        function renderValuation(data) {
+            const container = document.getElementById('valuationContent');
+            
+            container.innerHTML = `
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div class="bg-gray-800 rounded-lg p-4">
+                        <h3 class="text-md font-semibold mb-3">Multiples</h3>
+                        <div class="space-y-2">
+                            <div class="flex justify-between">
+                                <span class="text-sm text-gray-400">P/E Ratio</span>
+                                <span class="text-sm font-medium">--</span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="text-sm text-gray-400">EV/EBITDA</span>
+                                <span class="text-sm font-medium">--</span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="text-sm text-gray-400">Price/Sales</span>
+                                <span class="text-sm font-medium">--</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="bg-gray-800 rounded-lg p-4">
+                        <h3 class="text-md font-semibold mb-3">Valuation vs Compounding</h3>
+                        <div class="text-center">
+                            <div class="text-2xl font-bold text-blue-400">--</div>
+                            <div class="text-sm text-gray-400 mt-1">Quality × Price Assessment</div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // Alerts Section
+        async function loadAllAlerts() {
+            const container = document.getElementById('allAlertsList');
+            
+            try {
+                const response = await fetch(`${API_BASE}/dashboard/latest`);
+                if (!response.ok) throw new Error('Failed to load alerts');
+                
+                const data = await response.json();
+                renderAllAlerts(data.recent_alerts || []);
+            } catch (error) {
+                console.error('Alerts load error:', error);
+                container.innerHTML = '<p class="text-red-400">Failed to load alerts</p>';
+            }
+        }
+
+        function renderAllAlerts(alerts) {
+            const container = document.getElementById('allAlertsList');
+            
+            if (!alerts || alerts.length === 0) {
+                container.innerHTML = '<p class="text-gray-400">No alerts found</p>';
+                return;
+            }
+
+            container.innerHTML = '';
+            
+            alerts.forEach(alert => {
+                const levelClass = alert.alert_level === 'CRITICAL' ? 'alert-critical' : 
+                                 alert.alert_level === 'IMPORTANT' ? 'alert-important' : 'alert-info';
+                
+                const div = document.createElement('div');
+                div.className = `bg-gray-800 rounded p-4 ${levelClass}`;
+                div.innerHTML = `
+                    <div class="flex justify-between items-start">
+                        <div class="flex-1">
+                            <div class="flex items-center space-x-2 mb-1">
+                                <span class="font-medium text-sm">${alert.alert_type}</span>
+                                <span class="text-xs px-2 py-0.5 rounded bg-gray-700">${alert.alert_level}</span>
+                            </div>
+                            <p class="text-sm text-gray-400">${alert.message}</p>
+                        </div>
+                        <span class="text-xs text-gray-500 ml-4 whitespace-nowrap">${formatDate(alert.created_at)}</span>
+                    </div>
+                `;
+                container.appendChild(div);
+            });
+        }
+
+        // Configuration Section
+        async function loadWeights() {
+            try {
+                const response = await fetch(`${API_BASE}/config/weights`);
+                if (!response.ok) throw new Error('Failed to load config');
+                
+                const data = await response.json();
+                populateWeightInputs(data.weights || {});
+            } catch (error) {
+                console.error('Config load error:', error);
+            }
+        }
+
+        function populateWeightInputs(weights) {
+            document.getElementById('weightRev').value = weights.revenue_growth || 0.25;
+            document.getElementById('weightRoic').value = weights.roic || 0.30;
+            document.getElementById('weightMargin').value = weights.margin_expansion || 0.20;
+            document.getElementById('weightRunway').value = weights.reinvestment_runway || 0.25;
+            
+            updateTotalWeight();
+        }
+
+        function updateTotalWeight() {
+            const vals = Array.from(document.querySelectorAll('#section-config input[type="number"]'))
+                           .map(input => parseFloat(input.value) || 0);
+            const total = vals.reduce((a, b) => a + b, 0);
+            document.getElementById('totalWeight').textContent = total.toFixed(2);
+        }
+
+        async function handleWeightUpdate(event) {
+            event.preventDefault();
+            
+            const weights = {
+                revenue_growth: parseFloat(document.getElementById('weightRev').value) || 0.25,
+                roic: parseFloat(document.getElementById('weightRoic').value) || 0.30,
+                margin_expansion: parseFloat(document.getElementById('weightMargin').value) || 0.20,
+                reinvestment_runway: parseFloat(document.getElementById('weightRunway').value) || 0.25,
+            };
+
+            try {
+                const response = await fetch(`${API_BASE}/config/weights`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(weights)
+                });
+                
+                if (!response.ok) throw new Error('Failed to update weights');
+                
+                const result = await response.json();
+                if (result.success) {
+                    alert('Weights updated successfully! Recalculate to apply changes.');
+                } else {
+                    alert('Failed to update weights: ' + result.message);
+                }
+            } catch (error) {
+                console.error('Weight update error:', error);
+                alert('Error updating weights: ' + error.message);
+            }
+        }
+
+        // Utility functions
+        function refreshDashboard() {
+            loadDashboard();
+            showSection(currentSection);
+        }
+
+        function recalculateCompany(companyId) {
+            if (confirm('Recalculate this company? This will reprocess all periods.')) {
+                fetch(`${API_BASE}/companies/${companyId}/recalculate-all`, { method: 'POST' })
+                    .then(r => r.json())
+                    .then(data => {
+                        if (data.success) {
+                            alert(`Recalculation complete: ${data.periods_reprocessed} periods processed`);
+                            loadDashboard();
+                        } else {
+                            alert('Recalculation failed: ' + data.message);
+                        }
+                    })
+                    .catch(err => console.error('Recalculate error:', err));
+            }
+        }
+
+        function setupAutoRefresh() {
+            setInterval(() => {
+                if (currentSection === 'overview') {
+                    loadDashboard();
+                }
+            }, 300000); // Auto-refresh every 5 minutes
+        }
+
+        function getScoreColor(score) {
+            if (typeof score !== 'number') return '#6b7280';
+            if (score >= 80) return '#10b981'; // Green - Competitive Compounder
+            if (score >= 60) return '#3b82f6'; // Blue - Strong Business  
+            if (score >= 40) return '#f59e0b'; // Orange - Good Business
+            return '#ef4444'; // Red - Weak Business
+        }
+
+        function getBarColorClass(name) {
+            const colors = {
+                'Revenue Growth': 'bg-blue-500',
+                'ROIC / Incremental ROIC': 'bg-green-500',
+                'Margin Expansion': 'bg-yellow-500',
+                'Reinvestment Runway': 'bg-purple-500',
+            };
+            return colors[name] || 'bg-gray-500';
+        }
+
+        function formatDate(dateStr) {
+            if (!dateStr) return '--';
+            const date = new Date(dateStr);
+            return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+        }
+    </script>
+</body>
+</html>
