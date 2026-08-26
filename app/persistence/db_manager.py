@@ -592,6 +592,47 @@ class DatabaseManager:
         self.execute("UPDATE alerts SET acknowledged = 1 WHERE id = ?", (alert_id,))
         self.commit()
     
+    def get_alerts(self, company_id: Optional[int] = None, limit: int = 20) -> List[Dict]:
+        """Get alerts, optionally filtered by company."""
+        if company_id:
+            return self.fetchall("""
+                SELECT a.*, c.ticker, c.name
+                FROM alerts a
+                JOIN companies c ON c.id = a.company_id
+                WHERE a.company_id = ?
+                ORDER BY a.triggered_at DESC LIMIT ?
+            """, (company_id, limit))
+        return self.fetchall("""
+            SELECT a.*, c.ticker, c.name
+            FROM alerts a
+            JOIN companies c ON c.id = a.company_id
+            ORDER BY a.triggered_at DESC LIMIT ?
+        """, (limit,))
+    
+    def delete_company(self, company_id: int) -> bool:
+        """Delete a company by ID. Returns True if deleted."""
+        cursor = self.execute("DELETE FROM companies WHERE id = ?", (company_id,))
+        self.commit()
+        return cursor.rowcount > 0
+    
+    def update_weights_db(self, new_weights: Dict, db_path: str) -> bool:
+        """Update scoring weights stored in SQLite config table."""
+        conn = sqlite3.connect(db_path)
+        try:
+            conn.execute("CREATE TABLE IF NOT EXISTS weight_config(key TEXT PRIMARY KEY, value TEXT)")
+            for key, val in new_weights.items():
+                conn.execute(
+                    "INSERT OR REPLACE INTO weight_config VALUES (?, ?)",
+                    (key, json.dumps(val))
+                )
+            conn.commit()
+            return True
+        except Exception:
+            conn.rollback()
+            return False
+        finally:
+            conn.close()
+    
     # ==================== DATA QUALITY LOGGING ====================
     
     def log_data_quality_issue(self, company_id: Optional[int], period_id: Optional[int],
