@@ -75,6 +75,7 @@ def create_app(db_path: str = "/data/compounder.db") -> FastAPI:
         title="Compounder Intelligence Dashboard",
         description="Persistent Compounder Intelligence — quarterly fundamental trend analysis",
         version="1.0.0",
+        root_path="",  # Don't prepend any path prefix; Traefik handles stripping
     )
     
     @app.get("/health")
@@ -88,6 +89,8 @@ def create_app(db_path: str = "/data/compounder.db") -> FastAPI:
     
     # --- Companies CRUD ---
     @app.get("/api/companies")
+    @app.get("/companies")  # Alias: works with and without /api prefix
+    @app.get("/companies")  # Alias: works both with and without /api prefix (Traefik strips)
     async def list_companies():
         try:
             companies = db.list_companies()
@@ -104,6 +107,7 @@ def create_app(db_path: str = "/data/compounder.db") -> FastAPI:
             raise HTTPException(status_code=500, detail=str(e))
     
     @app.post("/api/companies")
+    @app.post("/companies")  # Alias: works with and without /api prefix
     async def add_company(data: CompanyCreate):
         try:
             # Check duplicate
@@ -125,6 +129,7 @@ def create_app(db_path: str = "/data/compounder.db") -> FastAPI:
             raise HTTPException(status_code=500, detail=str(e))
     
     @app.get("/api/companies/{company_id}")
+    @app.get("/companies/{company_id}")  # Alias: works with and without /api prefix
     async def get_company(company_id: int):
         try:
             company = db.get_company_by_id(company_id)
@@ -153,6 +158,7 @@ def create_app(db_path: str = "/data/compounder.db") -> FastAPI:
             raise HTTPException(status_code=500, detail=str(e))
     
     @app.delete("/api/companies/{company_id}")
+    @app.delete("/companies/{company_id}")  # Alias: works with and without /api prefix
     async def delete_company(company_id: int):
         try:
             deleted = db.delete_company(company_id)
@@ -165,6 +171,7 @@ def create_app(db_path: str = "/data/compounder.db") -> FastAPI:
             raise HTTPException(status_code=500, detail=str(e))
     
     @app.post("/api/companies/{company_id}/calculate")
+    @app.post("/companies/{company_id}/calculate")  # Alias: works with and without /api prefix
     async def calculate_company(company_id: int, force: bool = False):
         """Trigger full calculation run for a specific company."""
         try:
@@ -204,6 +211,7 @@ def create_app(db_path: str = "/data/compounder.db") -> FastAPI:
             raise HTTPException(status_code=500, detail=str(e))
     
     @app.post("/api/companies/{company_id}/recalculate-all")
+    @app.post("/companies/{company_id}/recalculate-all")  # Alias: works with and without /api prefix
     async def recalculate_all(company_id: int):
         """Force-recalculate ALL periods for a company (rebuild methodology)."""
         try:
@@ -226,6 +234,7 @@ def create_app(db_path: str = "/data/compounder.db") -> FastAPI:
             raise HTTPException(status_code=500, detail=str(e))
     
     @app.get("/api/companies/{company_id}/scores")
+    @app.get("/companies/{company_id}/scores")  # Alias: works with and without /api prefix
     async def get_company_scores(company_id: int, limit: int = 20):
         """Get historical compounder scores with breakdown."""
         try:
@@ -235,6 +244,7 @@ def create_app(db_path: str = "/data/compounder.db") -> FastAPI:
             raise HTTPException(status_code=500, detail=str(e))
     
     @app.get("/api/companies/{company_id}/alerts")
+    @app.get("/companies/{company_id}/alerts")  # Alias: works with and without /api prefix
     async def get_company_alerts(company_id: int, limit: int = 50):
         """Get alert history for a company."""
         try:
@@ -244,6 +254,7 @@ def create_app(db_path: str = "/data/compounder.db") -> FastAPI:
             raise HTTPException(status_code=500, detail=str(e))
     
     @app.get("/api/metrics/{company_id}")
+    @app.get("/metrics/{company_id}")  # Alias: works with and without /api prefix
     async def get_metrics(
         company_id: int, 
         period_id: Optional[int] = Query(None, description='Period ID'),
@@ -289,6 +300,7 @@ def create_app(db_path: str = "/data/compounder.db") -> FastAPI:
             raise HTTPException(status_code=500, detail=str(e))
     
     @app.post("/api/pipeline/import-json")
+    @app.post("/pipeline/import-json")  # Alias: works with and without /api prefix
     async def ingest_json_file(data: dict):
         """
         Ingest a parsed SEC filing JSON file.
@@ -322,6 +334,7 @@ def create_app(db_path: str = "/data/compounder.db") -> FastAPI:
             raise HTTPException(status_code=500, detail=str(e))
     
     @app.post("/api/pipeline/bulk-import-dir")
+    @app.post("/pipeline/bulk-import-dir")  # Alias: works with and without /api prefix
     async def bulk_import_directory(data: dict):
         """
         Bulk import from a directory of SEC extraction files.
@@ -354,6 +367,7 @@ def create_app(db_path: str = "/data/compounder.db") -> FastAPI:
             raise HTTPException(status_code=500, detail=str(e))
     
     @app.get("/api/config/weights")
+    @app.get("/config/weights")  # Alias: works with and without /api prefix
     async def get_weights():
         """Get current scoring weight configuration."""
         try:
@@ -378,6 +392,7 @@ def create_app(db_path: str = "/data/compounder.db") -> FastAPI:
             raise HTTPException(status_code=500, detail=str(e))
     
     @app.put("/api/config/weights")
+    @app.put("/config/weights")  # Alias: works with and without /api prefix
     async def update_weights(weights: RebalanceWeights):
         """
         Update scoring weights. Changes persist immediately without restart.
@@ -414,6 +429,7 @@ def create_app(db_path: str = "/data/compounder.db") -> FastAPI:
             raise HTTPException(status_code=500, detail=str(e))
     
     @app.post("/api/admin/recalculate-all")
+    @app.post("/admin/recalculate-all")  # Alias: works with and without /api prefix
     async def recalculate_everything():
         """Full recalculation across all companies and periods."""
         try:
@@ -423,6 +439,7 @@ def create_app(db_path: str = "/data/compounder.db") -> FastAPI:
             raise HTTPException(status_code=500, detail=str(e))
     
     @app.get("/api/dashboard/latest")
+    @app.get("/dashboard/latest")  # Alias: works with and without /api prefix
     async def dashboard_latest():
         """
         Dashboard overview endpoint — returns summarized data for the main view.

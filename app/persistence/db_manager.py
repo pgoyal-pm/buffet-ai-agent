@@ -195,6 +195,10 @@ class DatabaseManager:
             "SELECT * FROM companies ORDER BY ticker"
         )
     
+    def get_company_by_id(self, company_id: int) -> Optional[Dict]:
+        """Get a company by its primary key ID."""
+        return self.fetchone("SELECT * FROM companies WHERE id = ?", (company_id,))
+    
     # ==================== PERIOD OPERATIONS ====================
     
     def create_fiscal_period(self, company_id: int, fiscal_year: int,
