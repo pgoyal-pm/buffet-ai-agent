@@ -88,9 +88,8 @@ def create_app(db_path: str = "/data/compounder.db") -> FastAPI:
         }
     
     # --- Companies CRUD ---
-    @app.get("/api/companies")
-    @app.get("/companies")  # Alias: works with and without /api prefix
-    @app.get("/companies")  # Alias: works both with and without /api prefix (Traefik strips)
+    @app.get("/api/companies", include_in_schema=False)
+    @app.get("/companies")
     async def list_companies():
         try:
             companies = db.list_companies()
